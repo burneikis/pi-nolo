@@ -7,10 +7,16 @@ Read-safe bash commands (`ls`, `grep`, `git status`, etc.) are auto-approved via
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/burneikis/pi-nolo/main/confirm-all-writes.ts -o ~/.pi/agent/extensions/confirm-all-writes.ts
+git clone https://github.com/burneikis/pi-nolo.git ~/.pi/agent/extensions/pi-nolo
 ```
 
-That's it — pi will discover the extension on next start.
+That's it — pi auto-discovers `~/.pi/agent/extensions/pi-nolo/index.ts` on next start.
+
+To update:
+
+```bash
+cd ~/.pi/agent/extensions/pi-nolo && git pull
+```
 
 ## What it does
 
