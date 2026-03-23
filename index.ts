@@ -102,6 +102,108 @@ const COMMAND_DANGEROUS_FLAGS: Record<string, RegExp[]> = {
   fd: [/\s-x\b/, /\s-X\b/, /\s--exec\b/, /\s--exec-batch\b/],
 };
 
+// --- Quote-aware command splitting ---
+
+/**
+ * Split a shell command on unquoted |, ||, &&, ;
+ * Respects single quotes, double quotes, and backslash escapes.
+ */
+function splitShellCommand(command: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let i = 0;
+
+  while (i < command.length) {
+    const ch = command[i];
+
+    if (ch === "\\" && i + 1 < command.length) {
+      current += command[i] + command[i + 1];
+      i += 2;
+      continue;
+    }
+
+    if (ch === "'") {
+      const end = command.indexOf("'", i + 1);
+      const stop = end === -1 ? command.length : end + 1;
+      current += command.slice(i, stop);
+      i = stop;
+      continue;
+    }
+
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < command.length && command[j] !== '"') {
+        if (command[j] === "\\" && j + 1 < command.length) j++;
+        j++;
+      }
+      current += command.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+
+    if ((ch === "|" && command[i + 1] === "|") || (ch === "&" && command[i + 1] === "&")) {
+      parts.push(current);
+      current = "";
+      i += 2;
+      continue;
+    }
+
+    if (ch === "|" || ch === ";") {
+      parts.push(current);
+      current = "";
+      i += 1;
+      continue;
+    }
+
+    current += ch;
+    i++;
+  }
+
+  if (current.length > 0) parts.push(current);
+  return parts.map((p) => p.trim()).filter((p) => p.length > 0);
+}
+
+/**
+ * Strip content inside single and double quotes from a command string.
+ * Used before running command-specific flag checks so that patterns
+ * don't match inside quoted arguments (e.g. find . -name "-exec").
+ */
+function stripQuotedStrings(command: string): string {
+  let result = "";
+  let i = 0;
+
+  while (i < command.length) {
+    const ch = command[i];
+
+    if (ch === "\\" && i + 1 < command.length) {
+      result += command[i] + command[i + 1];
+      i += 2;
+      continue;
+    }
+
+    if (ch === "'") {
+      const end = command.indexOf("'", i + 1);
+      i = end === -1 ? command.length : end + 1;
+      continue;
+    }
+
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < command.length && command[j] !== '"') {
+        if (command[j] === "\\" && j + 1 < command.length) j++;
+        j++;
+      }
+      i = j + 1;
+      continue;
+    }
+
+    result += ch;
+    i++;
+  }
+
+  return result;
+}
+
 // --- Config types ---
 
 interface NoloConfig {
@@ -147,34 +249,42 @@ function isSafeCommand(
 ): boolean {
   const trimmed = command.trim();
 
-  // 1. Check shell constructs on the raw string
-  for (const re of DANGEROUS_SHELL_CONSTRUCTS) {
-    if (re.test(trimmed)) return false;
-  }
+  // Split on unquoted pipes/chains and check each sub-command.
+  // Safe only if every sub-command passes all checks.
+  const parts = splitShellCommand(trimmed);
 
-  // 2. Check if the first token is a dangerous command
-  const firstToken = trimmed.split(/\s/)[0];
-  if (DANGEROUS_COMMANDS.includes(firstToken)) return false;
+  return parts.every((part) => {
+    const sub = part.trim();
 
-  // 3. Match against safe prefixes
-  for (const prefix of safePrefixes) {
-    if (
-      trimmed === prefix ||
-      trimmed.startsWith(prefix + " ") ||
-      trimmed.startsWith(prefix + "\n")
-    ) {
-      // 4. Check command-specific dangerous flags
-      const cmdPatterns = COMMAND_DANGEROUS_FLAGS[prefix];
-      if (cmdPatterns) {
-        for (const re of cmdPatterns) {
-          if (re.test(trimmed)) return false;
-        }
-      }
-      return true;
+    // 1. Check shell constructs on the raw string
+    for (const re of DANGEROUS_SHELL_CONSTRUCTS) {
+      if (re.test(sub)) return false;
     }
-  }
 
-  return false;
+    // 2. Check if the first token is a dangerous command
+    const firstToken = sub.split(/\s/)[0];
+    if (DANGEROUS_COMMANDS.includes(firstToken)) return false;
+
+    // 3. Match against safe prefixes
+    for (const prefix of safePrefixes) {
+      if (
+        sub === prefix ||
+        sub.startsWith(prefix + " ") ||
+        sub.startsWith(prefix + "\n")
+      ) {
+        // 4. Check command-specific dangerous flags (on unquoted string)
+        const cmdPatterns = COMMAND_DANGEROUS_FLAGS[prefix];
+        if (cmdPatterns) {
+          const unquoted = stripQuotedStrings(sub);
+          for (const re of cmdPatterns) {
+            if (re.test(unquoted)) return false;
+          }
+        }
+        return true;
+      }
+    }
+    return false;
+  });
 }
 
 // --- Extension entry point ---
