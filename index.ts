@@ -71,29 +71,41 @@ const DEFAULT_SAFE_PREFIXES = [
   "go version",
 ];
 
-const DEFAULT_DANGEROUS_PATTERNS = [
-  "\\|",
-  "&&",
-  "\\|\\|",
-  ";",
-  "`",
-  "\\$\\(",
-  ">\\s",
-  ">>",
-  "\\brm\\b",
-  "\\bsudo\\b",
-  "\\beval\\b",
-  "\\bexec\\b",
-  "\\bsource\\b",
-  "\\bsh\\b",
-  "\\bbash\\b",
+// Shell constructs that are dangerous regardless of position.
+// Checked against the raw sub-command string.
+const DANGEROUS_SHELL_CONSTRUCTS: RegExp[] = [
+  /`/,
+  /\$\(/,
+  />\s/,
+  />>/,
 ];
+
+// Commands that are dangerous when they appear as the first token
+// of a sub-command. Checked only against the first token, so paths
+// like /opt/rm-old/ or quoted strings like grep "rm" won't match.
+const DANGEROUS_COMMANDS: string[] = [
+  "rm",
+  "sudo",
+  "eval",
+  "exec",
+  "source",
+  "sh",
+  "bash",
+];
+
+// Command-specific dangerous flags, checked only when the
+// sub-command matches the corresponding safe prefix.
+// Patterns run against the quote-stripped string to avoid
+// false positives from flag names inside quoted arguments.
+const COMMAND_DANGEROUS_FLAGS: Record<string, RegExp[]> = {
+  find: [/\s-exec\b/, /\s-execdir\b/, /\s-delete\b/],
+  fd: [/\s-x\b/, /\s-X\b/, /\s--exec\b/, /\s--exec-batch\b/],
+};
 
 // --- Config types ---
 
 interface NoloConfig {
   safePrefixes: string[];
-  dangerousPatterns: string[];
 }
 
 // --- Config loading ---
@@ -108,7 +120,7 @@ function loadJsonFile(path: string): Partial<NoloConfig> | null {
   }
 }
 
-function loadConfig(): { safePrefixes: string[]; dangerousRegexes: RegExp[] } {
+function loadConfig(): { safePrefixes: string[] } {
   const globalPath = join(homedir(), ".pi", "agent", "nolo.json");
   const projectPath = join(".pi", "nolo.json");
 
@@ -124,18 +136,7 @@ function loadConfig(): { safePrefixes: string[]; dangerousRegexes: RegExp[] } {
     safePrefixes = [...new Set([...safePrefixes, ...projectCfg.safePrefixes])];
   }
 
-  // Dangerous patterns: project overrides global overrides defaults
-  let dangerousPatterns = DEFAULT_DANGEROUS_PATTERNS;
-  if (globalCfg?.dangerousPatterns) {
-    dangerousPatterns = globalCfg.dangerousPatterns;
-  }
-  if (projectCfg?.dangerousPatterns) {
-    dangerousPatterns = projectCfg.dangerousPatterns;
-  }
-
-  const dangerousRegexes = dangerousPatterns.map((p) => new RegExp(p));
-
-  return { safePrefixes, dangerousRegexes };
+  return { safePrefixes };
 }
 
 // --- Safety check ---
@@ -143,22 +144,32 @@ function loadConfig(): { safePrefixes: string[]; dangerousRegexes: RegExp[] } {
 function isSafeCommand(
   command: string,
   safePrefixes: string[],
-  dangerousRegexes: RegExp[],
 ): boolean {
   const trimmed = command.trim();
 
-  // Check dangerous patterns first — any match means unsafe
-  for (const re of dangerousRegexes) {
+  // 1. Check shell constructs on the raw string
+  for (const re of DANGEROUS_SHELL_CONSTRUCTS) {
     if (re.test(trimmed)) return false;
   }
 
-  // Check if command matches a safe prefix
+  // 2. Check if the first token is a dangerous command
+  const firstToken = trimmed.split(/\s/)[0];
+  if (DANGEROUS_COMMANDS.includes(firstToken)) return false;
+
+  // 3. Match against safe prefixes
   for (const prefix of safePrefixes) {
     if (
       trimmed === prefix ||
       trimmed.startsWith(prefix + " ") ||
       trimmed.startsWith(prefix + "\n")
     ) {
+      // 4. Check command-specific dangerous flags
+      const cmdPatterns = COMMAND_DANGEROUS_FLAGS[prefix];
+      if (cmdPatterns) {
+        for (const re of cmdPatterns) {
+          if (re.test(trimmed)) return false;
+        }
+      }
       return true;
     }
   }
@@ -170,9 +181,6 @@ function isSafeCommand(
 
 export default function (pi: ExtensionAPI) {
   let safePrefixes: string[] = DEFAULT_SAFE_PREFIXES;
-  let dangerousRegexes: RegExp[] = DEFAULT_DANGEROUS_PATTERNS.map(
-    (p) => new RegExp(p),
-  );
   let yoloMode: YoloMode = "off";
 
   // --- Status helper ---
@@ -199,7 +207,6 @@ export default function (pi: ExtensionAPI) {
     // Load config
     const config = loadConfig();
     safePrefixes = config.safePrefixes;
-    dangerousRegexes = config.dangerousRegexes;
 
     // Restore YOLO mode from the last persisted entry (if any)
     const entries = ctx.sessionManager.getEntries();
@@ -323,7 +330,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       // Auto-approve safe read-only commands (in both "off" and "writes" modes)
-      if (isSafeCommand(command, safePrefixes, dangerousRegexes)) {
+      if (isSafeCommand(command, safePrefixes)) {
         return undefined;
       }
 
