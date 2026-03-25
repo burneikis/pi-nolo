@@ -34,6 +34,7 @@ const YOLO_ENTRY_TYPE = "nolo:yolo-mode";
 // --- Default configuration ---
 
 const DEFAULT_SAFE_PREFIXES = [
+  "cd",
   "ls",
   "cat",
   "head",
@@ -54,15 +55,26 @@ const DEFAULT_SAFE_PREFIXES = [
   "echo",
   "date",
   "uname",
-  "env",
   "printenv",
+  "sort",
+  "uniq",
+  "cut",
+  "tr",
+  "diff",
+  "basename",
+  "dirname",
+  "realpath",
+  "readlink",
+  "id",
+  "hostname",
+  "md5sum",
+  "sha256sum",
   "git status",
   "git log",
   "git diff",
   "git show",
-  "git branch",
-  "git remote",
-  "git tag",
+  "git blame",
+  "git ls-files",
   "git rev-parse",
   "npm list",
   "npm outdated",
@@ -74,29 +86,144 @@ const DEFAULT_SAFE_PREFIXES = [
   "go version",
 ];
 
-const DEFAULT_DANGEROUS_PATTERNS = [
-  "\\|",
-  "&&",
-  "\\|\\|",
-  ";",
-  "`",
-  "\\$\\(",
-  ">\\s",
-  ">>",
-  "\\brm\\b",
-  "\\bsudo\\b",
-  "\\beval\\b",
-  "\\bexec\\b",
-  "\\bsource\\b",
-  "\\bsh\\b",
-  "\\bbash\\b",
+// Shell constructs that are dangerous regardless of position.
+// Checked against the raw sub-command string.
+const DANGEROUS_SHELL_CONSTRUCTS: RegExp[] = [
+  /`/,
+  /\$\(/,
+  />\s/,
+  />>/,
 ];
+
+// Commands that are dangerous when they appear as the first token
+// of a sub-command. Checked only against the first token, so paths
+// like /opt/rm-old/ or quoted strings like grep "rm" won't match.
+const DANGEROUS_COMMANDS: string[] = [
+  "rm",
+  "sudo",
+  "eval",
+  "exec",
+  "source",
+  "sh",
+  "bash",
+];
+
+// Command-specific dangerous flags, checked only when the
+// sub-command matches the corresponding safe prefix.
+// Patterns run against the quote-stripped string to avoid
+// false positives from flag names inside quoted arguments.
+const COMMAND_DANGEROUS_FLAGS: Record<string, RegExp[]> = {
+  find: [/\s-exec\b/, /\s-execdir\b/, /\s-delete\b/],
+  fd: [/\s-x\b/, /\s-X\b/, /\s--exec\b/, /\s--exec-batch\b/],
+  sort: [/\s-o\b/, /\s--output\b/],
+};
+
+// --- Quote-aware command splitting ---
+
+/**
+ * Split a shell command on unquoted |, ||, &&, ;
+ * Respects single quotes, double quotes, and backslash escapes.
+ */
+function splitShellCommand(command: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let i = 0;
+
+  while (i < command.length) {
+    const ch = command[i];
+
+    if (ch === "\\" && i + 1 < command.length) {
+      current += command[i] + command[i + 1];
+      i += 2;
+      continue;
+    }
+
+    if (ch === "'") {
+      const end = command.indexOf("'", i + 1);
+      const stop = end === -1 ? command.length : end + 1;
+      current += command.slice(i, stop);
+      i = stop;
+      continue;
+    }
+
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < command.length && command[j] !== '"') {
+        if (command[j] === "\\" && j + 1 < command.length) j++;
+        j++;
+      }
+      current += command.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+
+    if ((ch === "|" && command[i + 1] === "|") || (ch === "&" && command[i + 1] === "&")) {
+      parts.push(current);
+      current = "";
+      i += 2;
+      continue;
+    }
+
+    if (ch === "|" || ch === ";") {
+      parts.push(current);
+      current = "";
+      i += 1;
+      continue;
+    }
+
+    current += ch;
+    i++;
+  }
+
+  if (current.length > 0) parts.push(current);
+  return parts.map((p) => p.trim()).filter((p) => p.length > 0);
+}
+
+/**
+ * Strip content inside single and double quotes from a command string.
+ * Used before running command-specific flag checks so that patterns
+ * don't match inside quoted arguments (e.g. find . -name "-exec").
+ */
+function stripQuotedStrings(command: string): string {
+  let result = "";
+  let i = 0;
+
+  while (i < command.length) {
+    const ch = command[i];
+
+    if (ch === "\\" && i + 1 < command.length) {
+      result += command[i] + command[i + 1];
+      i += 2;
+      continue;
+    }
+
+    if (ch === "'") {
+      const end = command.indexOf("'", i + 1);
+      i = end === -1 ? command.length : end + 1;
+      continue;
+    }
+
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < command.length && command[j] !== '"') {
+        if (command[j] === "\\" && j + 1 < command.length) j++;
+        j++;
+      }
+      i = j + 1;
+      continue;
+    }
+
+    result += ch;
+    i++;
+  }
+
+  return result;
+}
 
 // --- Config types ---
 
 interface NoloConfig {
   safePrefixes: string[];
-  dangerousPatterns: string[];
 }
 
 // --- Config loading ---
@@ -111,7 +238,7 @@ function loadJsonFile(path: string): Partial<NoloConfig> | null {
   }
 }
 
-function loadConfig(): { safePrefixes: string[]; dangerousRegexes: RegExp[] } {
+function loadConfig(): { safePrefixes: string[] } {
   const globalPath = join(homedir(), ".pi", "agent", "nolo.json");
   const projectPath = join(".pi", "nolo.json");
 
@@ -127,18 +254,7 @@ function loadConfig(): { safePrefixes: string[]; dangerousRegexes: RegExp[] } {
     safePrefixes = [...new Set([...safePrefixes, ...projectCfg.safePrefixes])];
   }
 
-  // Dangerous patterns: project overrides global overrides defaults
-  let dangerousPatterns = DEFAULT_DANGEROUS_PATTERNS;
-  if (globalCfg?.dangerousPatterns) {
-    dangerousPatterns = globalCfg.dangerousPatterns;
-  }
-  if (projectCfg?.dangerousPatterns) {
-    dangerousPatterns = projectCfg.dangerousPatterns;
-  }
-
-  const dangerousRegexes = dangerousPatterns.map((p) => new RegExp(p));
-
-  return { safePrefixes, dangerousRegexes };
+  return { safePrefixes };
 }
 
 // --- Safety check ---
@@ -146,36 +262,51 @@ function loadConfig(): { safePrefixes: string[]; dangerousRegexes: RegExp[] } {
 function isSafeCommand(
   command: string,
   safePrefixes: string[],
-  dangerousRegexes: RegExp[],
 ): boolean {
   const trimmed = command.trim();
 
-  // Check dangerous patterns first — any match means unsafe
-  for (const re of dangerousRegexes) {
-    if (re.test(trimmed)) return false;
-  }
+  // Split on unquoted pipes/chains and check each sub-command.
+  // Safe only if every sub-command passes all checks.
+  const parts = splitShellCommand(trimmed);
 
-  // Check if command matches a safe prefix
-  for (const prefix of safePrefixes) {
-    if (
-      trimmed === prefix ||
-      trimmed.startsWith(prefix + " ") ||
-      trimmed.startsWith(prefix + "\n")
-    ) {
-      return true;
+  return parts.every((part) => {
+    const sub = part.trim();
+
+    // 1. Check shell constructs on the raw string
+    for (const re of DANGEROUS_SHELL_CONSTRUCTS) {
+      if (re.test(sub)) return false;
     }
-  }
 
-  return false;
+    // 2. Check if the first token is a dangerous command
+    const firstToken = sub.split(/\s/)[0];
+    if (DANGEROUS_COMMANDS.includes(firstToken)) return false;
+
+    // 3. Match against safe prefixes
+    for (const prefix of safePrefixes) {
+      if (
+        sub === prefix ||
+        sub.startsWith(prefix + " ") ||
+        sub.startsWith(prefix + "\n")
+      ) {
+        // 4. Check command-specific dangerous flags (on unquoted string)
+        const cmdPatterns = COMMAND_DANGEROUS_FLAGS[prefix];
+        if (cmdPatterns) {
+          const unquoted = stripQuotedStrings(sub);
+          for (const re of cmdPatterns) {
+            if (re.test(unquoted)) return false;
+          }
+        }
+        return true;
+      }
+    }
+    return false;
+  });
 }
 
 // --- Extension entry point ---
 
 export default function (pi: ExtensionAPI) {
   let safePrefixes: string[] = DEFAULT_SAFE_PREFIXES;
-  let dangerousRegexes: RegExp[] = DEFAULT_DANGEROUS_PATTERNS.map(
-    (p) => new RegExp(p),
-  );
   let yoloMode: YoloMode = "off";
 
   // --- Status helper ---
@@ -202,7 +333,6 @@ export default function (pi: ExtensionAPI) {
     // Load config
     const config = loadConfig();
     safePrefixes = config.safePrefixes;
-    dangerousRegexes = config.dangerousRegexes;
 
     // Restore YOLO mode from the last persisted entry (if any)
     const entries = ctx.sessionManager.getEntries();
@@ -326,7 +456,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       // Auto-approve safe read-only commands (in both "off" and "writes" modes)
-      if (isSafeCommand(command, safePrefixes, dangerousRegexes)) {
+      if (isSafeCommand(command, safePrefixes)) {
         return undefined;
       }
 
