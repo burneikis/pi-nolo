@@ -34,6 +34,7 @@ const YOLO_ENTRY_TYPE = "nolo:yolo-mode";
 // --- Default configuration ---
 
 const DEFAULT_SAFE_PREFIXES = [
+  "cd",
   "ls",
   "cat",
   "head",
@@ -55,11 +56,25 @@ const DEFAULT_SAFE_PREFIXES = [
   "date",
   "uname",
   "printenv",
+  "sort",
+  "uniq",
+  "cut",
+  "tr",
+  "diff",
+  "basename",
+  "dirname",
+  "realpath",
+  "readlink",
+  "id",
+  "hostname",
+  "md5sum",
+  "sha256sum",
   "git status",
   "git log",
   "git diff",
   "git show",
-
+  "git blame",
+  "git ls-files",
   "git rev-parse",
   "npm list",
   "npm outdated",
@@ -100,6 +115,7 @@ const DANGEROUS_COMMANDS: string[] = [
 const COMMAND_DANGEROUS_FLAGS: Record<string, RegExp[]> = {
   find: [/\s-exec\b/, /\s-execdir\b/, /\s-delete\b/],
   fd: [/\s-x\b/, /\s-X\b/, /\s--exec\b/, /\s--exec-batch\b/],
+  sort: [/\s-o\b/, /\s--output\b/],
 };
 
 // --- Quote-aware command splitting ---
