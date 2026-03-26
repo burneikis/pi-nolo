@@ -7,15 +7,13 @@ Read-safe bash commands (`ls`, `grep`, `git status`, etc.) are auto-approved via
 ## Install
 
 ```bash
-git clone https://github.com/burneikis/pi-nolo.git ~/.pi/agent/extensions/pi-nolo
+pi install npm:@burneikis/pi-nolo
 ```
 
-That's it — pi auto-discovers `~/.pi/agent/extensions/pi-nolo/index.ts` on next start.
-
-To update:
+Or from git:
 
 ```bash
-cd ~/.pi/agent/extensions/pi-nolo && git pull
+pi install https://github.com/burneikis/pi-nolo
 ```
 
 ## What it does
