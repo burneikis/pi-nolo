@@ -235,10 +235,7 @@ export default function (pi: ExtensionAPI) {
       updateStatus(ctx);
       const label = YOLO_LABELS[yoloMode];
       if (yoloMode === "off") {
-        ctx.ui.notify(
-          `YOLO mode off — all mutations require confirmation`,
-          "info",
-        );
+        ctx.ui.notify(`${label} — all mutations require confirmation`, "info");
       } else if (yoloMode === "writes") {
         ctx.ui.notify(
           `${label} — write/edit auto-approved; bash still guarded`,
