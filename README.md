@@ -16,6 +16,10 @@ Or from git:
 pi install https://github.com/burneikis/pi-nolo
 ```
 
+### Note:
+
+There will be a keybing conflict with `ctrl+y` for cycling yolo mode, and `tui.editor.yank`, so I reccomend changing `~/.pi/agent/keybindings.json` to include `"tui.editor.yank": "ctrl+shift+y"`.
+
 ## What it does
 
 Every time the agent tries to:
