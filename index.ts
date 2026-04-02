@@ -178,9 +178,17 @@ function isSafeCommand(
  * to the current file content — done synchronously so renderCall can use it.
  */
 function buildEagerDiff(
-  _path: string,
+  path: string,
   edits: Array<{ oldText: string; newText: string }>,
 ): string | null {
+  // Read the file so we can compute starting line numbers for each edit.
+  let fileContent: string | null = null;
+  try {
+    fileContent = readFileSync(path, "utf-8");
+  } catch {
+    // File doesn't exist yet (new file) — no line numbers available.
+  }
+
   const lines: string[] = [];
 
   for (let i = 0; i < edits.length; i++) {
@@ -190,14 +198,32 @@ function buildEagerDiff(
       lines.push(`@@ edit ${i + 1}/${edits.length} @@`);
     }
 
+    // Compute 1-based starting line of this edit in the file.
+    let oldStartLine = 1;
+    let newStartLine = 1;
+    if (fileContent !== null) {
+      const idx = fileContent.indexOf(oldText);
+      if (idx !== -1) {
+        oldStartLine = fileContent.slice(0, idx).split("\n").length;
+        newStartLine = oldStartLine;
+      }
+    }
+
+    const oldLineCount = Math.max(
+      String(oldStartLine + oldText.split("\n").length - 1).length,
+      String(newStartLine + newText.split("\n").length - 1).length,
+    );
+
+    const pad = (n: number) => String(n).padStart(oldLineCount, " ");
+
     // Removed lines
-    for (const line of oldText.split("\n")) {
-      lines.push(`- ${line}`);
-    }
+    oldText.split("\n").forEach((line, j) => {
+      lines.push(`-${pad(oldStartLine + j)} ${line}`);
+    });
     // Added lines
-    for (const line of newText.split("\n")) {
-      lines.push(`+ ${line}`);
-    }
+    newText.split("\n").forEach((line, j) => {
+      lines.push(`+${pad(newStartLine + j)} ${line}`);
+    });
   }
 
   return lines.join("\n");
@@ -232,7 +258,7 @@ export default function (pi: ExtensionAPI) {
       if (edits.length > 0) {
         const diffStr = buildEagerDiff(path, edits);
         if (diffStr) {
-          output += "\n" + renderDiff(diffStr);
+          output += "\n\n" + renderDiff(diffStr);
         }
       }
 
