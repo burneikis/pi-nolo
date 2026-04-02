@@ -194,10 +194,6 @@ function buildEagerDiff(
   for (let i = 0; i < edits.length; i++) {
     const { oldText, newText } = edits[i];
 
-    if (edits.length > 1) {
-      lines.push(`@@ edit ${i + 1}/${edits.length} @@`);
-    }
-
     // Compute 1-based starting line of this edit in the file.
     let oldStartLine = 1;
     let newStartLine = 1;
