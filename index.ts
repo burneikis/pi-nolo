@@ -12,6 +12,8 @@
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { createEditToolDefinition, renderDiff } from "@mariozechner/pi-coding-agent";
+import { Text } from "@mariozechner/pi-tui";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
@@ -169,9 +171,76 @@ function isSafeCommand(
   return false;
 }
 
-// --- Extension entry point ---
+// --- Edit preview diff helpers ---
+
+/**
+ * Build a diff string (in the format renderDiff expects) by applying the edits
+ * to the current file content — done synchronously so renderCall can use it.
+ */
+function buildEagerDiff(
+  _path: string,
+  edits: Array<{ oldText: string; newText: string }>,
+): string | null {
+  const lines: string[] = [];
+
+  for (let i = 0; i < edits.length; i++) {
+    const { oldText, newText } = edits[i];
+
+    if (edits.length > 1) {
+      lines.push(`@@ edit ${i + 1}/${edits.length} @@`);
+    }
+
+    // Removed lines
+    for (const line of oldText.split("\n")) {
+      lines.push(`- ${line}`);
+    }
+    // Added lines
+    for (const line of newText.split("\n")) {
+      lines.push(`+ ${line}`);
+    }
+  }
+
+  return lines.join("\n");
+}
 
 export default function (pi: ExtensionAPI) {
+  // --- Override edit tool renderCall to restore eager diff preview ---
+  //
+  // Since pi 0.63.2 the built-in edit tool deferred its diff to renderResult
+  // (after the tool runs). pi-nolo's confirm dialog fires during tool_call,
+  // before the tool runs, so the user saw the popup with no preview.
+  // We override renderCall to compute and display the diff eagerly, so the
+  // TUI shows the diff *before* the confirmation popup appears.
+  const builtinEdit = createEditToolDefinition(process.cwd());
+
+  pi.registerTool({
+    ...builtinEdit,
+    renderCall(args, theme, context) {
+      const path: string = (args as any)?.path ?? "";
+      const edits: Array<{ oldText: string; newText: string }> =
+        (args as any)?.edits ?? [];
+
+      // Header line (same style as built-in: "edit <path>")
+      const shortPath = path.length > 60 ? "…" + path.slice(-59) : path;
+      let header = `${theme.fg("toolTitle", theme.bold("edit"))} ${theme.fg("accent", shortPath)}`;
+      if (edits.length > 0) {
+        header += theme.fg("dim", ` (${edits.length} edit${edits.length === 1 ? "" : "s"})`);
+      }
+
+      let output = header;
+
+      if (edits.length > 0) {
+        const diffStr = buildEagerDiff(path, edits);
+        if (diffStr) {
+          output += "\n" + renderDiff(diffStr);
+        }
+      }
+
+      const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+      text.setText(output);
+      return text;
+    },
+  });
   let safePrefixes: string[] = DEFAULT_SAFE_PREFIXES;
   let dangerousRegexes: RegExp[] = DEFAULT_DANGEROUS_PATTERNS.map(
     (p) => new RegExp(p),
