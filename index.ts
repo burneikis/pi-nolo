@@ -189,37 +189,57 @@ function buildEagerDiff(
     // File doesn't exist yet (new file) — no line numbers available.
   }
 
+  const CONTEXT = 2;
+  const fileLines = fileContent !== null ? fileContent.split("\n") : [];
+  const totalLines = fileLines.length;
+
+  // Compute line number width from total file length.
+  const pad = (n: number) => String(n).padStart(String(totalLines).length, " ");
+
   const lines: string[] = [];
+  // Track the last file line (1-based) we've already emitted, to prevent
+  // context regions from overlapping between adjacent edits.
+  let lastEmittedLine = 0;
 
-  for (let i = 0; i < edits.length; i++) {
-    const { oldText, newText } = edits[i];
-
-    // Compute 1-based starting line of this edit in the file.
+  for (const { oldText, newText } of edits) {
+    // Find 1-based start line of this edit in the file.
     let oldStartLine = 1;
-    let newStartLine = 1;
     if (fileContent !== null) {
       const idx = fileContent.indexOf(oldText);
       if (idx !== -1) {
         oldStartLine = fileContent.slice(0, idx).split("\n").length;
-        newStartLine = oldStartLine;
       }
     }
 
-    const oldLineCount = Math.max(
-      String(oldStartLine + oldText.split("\n").length - 1).length,
-      String(newStartLine + newText.split("\n").length - 1).length,
-    );
+    const oldEditLines = oldText.split("\n");
+    const newEditLines = newText.split("\n");
 
-    const pad = (n: number) => String(n).padStart(oldLineCount, " ");
+    // Context before — start after whatever we already emitted.
+    const ctxStart = Math.max(lastEmittedLine + 1, oldStartLine - CONTEXT);
+    if (lastEmittedLine > 0 && ctxStart > lastEmittedLine + 1) {
+      lines.push(` ${" ".repeat(String(totalLines).length)} ...`);
+    }
+    for (let k = ctxStart; k < oldStartLine; k++) {
+      lines.push(` ${pad(k)} ${fileLines[k - 1] ?? ""}`);
+    }
 
-    // Removed lines
-    oldText.split("\n").forEach((line, j) => {
+    // Removed lines.
+    oldEditLines.forEach((line, j) => {
       lines.push(`-${pad(oldStartLine + j)} ${line}`);
     });
-    // Added lines
-    newText.split("\n").forEach((line, j) => {
-      lines.push(`+${pad(newStartLine + j)} ${line}`);
+    // Added lines.
+    newEditLines.forEach((line, j) => {
+      lines.push(`+${pad(oldStartLine + j)} ${line}`);
     });
+
+    // Context after.
+    const oldEndLine = oldStartLine + oldEditLines.length - 1;
+    const ctxEnd = Math.min(totalLines, oldEndLine + CONTEXT);
+    for (let k = oldEndLine + 1; k <= ctxEnd; k++) {
+      lines.push(` ${pad(k)} ${fileLines[k - 1] ?? ""}`);
+    }
+
+    lastEmittedLine = ctxEnd;
   }
 
   return lines.join("\n");
