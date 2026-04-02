@@ -11,12 +11,6 @@ function tryReadFile(path: string): string | undefined {
   }
 }
 
-/** Find the 1-based line number where `needle` first appears in `haystack`. */
-function findStartLine(haystack: string, needle: string): number {
-  const idx = haystack.indexOf(needle);
-  return idx === -1 ? 1 : haystack.slice(0, idx).split("\n").length;
-}
-
 const CONTEXT_LINES = 2;
 
 /**
@@ -42,10 +36,31 @@ export function buildEagerDiff(
   let lastEmittedLine = 0;
 
   for (const { oldText, newText } of edits) {
-    const startLine = fileContent != null ? findStartLine(fileContent, oldText) : 1;
     const oldLines = oldText.split("\n");
     const newLines = newText.split("\n");
-    const endLine = startLine + oldLines.length - 1;
+
+    // Determine start line. If oldText isn't found (e.g. resumed session where
+    // edits were already applied), fall back to locating newText in the file.
+    let startLine: number;
+    let alreadyApplied = false;
+    if (fileContent != null) {
+      const oldIdx = fileContent.indexOf(oldText);
+      if (oldIdx !== -1) {
+        startLine = fileContent.slice(0, oldIdx).split("\n").length;
+      } else {
+        const newIdx = fileContent.indexOf(newText);
+        if (newIdx !== -1) {
+          startLine = fileContent.slice(0, newIdx).split("\n").length;
+          alreadyApplied = true;
+        } else {
+          startLine = 1;
+        }
+      }
+    } else {
+      startLine = 1;
+    }
+
+    const endLine = startLine + (alreadyApplied ? newLines.length : oldLines.length) - 1;
 
     // Gap separator between non-contiguous edits
     const ctxStart = Math.max(lastEmittedLine + 1, startLine - CONTEXT_LINES);
