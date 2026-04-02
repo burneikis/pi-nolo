@@ -13,7 +13,7 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { createEditToolDefinition, renderDiff } from "@mariozechner/pi-coding-agent";
-import { Text } from "@mariozechner/pi-tui";
+import { Container, Text } from "@mariozechner/pi-tui";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
@@ -239,6 +239,24 @@ export default function (pi: ExtensionAPI) {
       const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
       text.setText(output);
       return text;
+    },
+    renderResult(result, _options, theme, context) {
+      // The diff was already shown eagerly in renderCall, so suppress the
+      // post-run diff from renderResult. Only surface errors.
+      if (context.isError) {
+        const errorText = result.content
+          .filter((c: any) => c.type === "text")
+          .map((c: any) => c.text || "")
+          .join("\n");
+        if (errorText) {
+          const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+          text.setText(`\n${theme.fg("error", errorText)}`);
+          return text;
+        }
+      }
+      const container = (context.lastComponent as Container | undefined) ?? new Container();
+      container.clear();
+      return container;
     },
   });
   let safePrefixes: string[] = DEFAULT_SAFE_PREFIXES;
