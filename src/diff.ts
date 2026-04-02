@@ -3,6 +3,22 @@ import { createEditToolDefinition, renderDiff } from "@mariozechner/pi-coding-ag
 import { Container, Text } from "@mariozechner/pi-tui";
 import { readFileSync } from "fs";
 
+function tryReadFile(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf-8");
+  } catch {
+    return undefined;
+  }
+}
+
+/** Find the 1-based line number where `needle` first appears in `haystack`. */
+function findStartLine(haystack: string, needle: string): number {
+  const idx = haystack.indexOf(needle);
+  return idx === -1 ? 1 : haystack.slice(0, idx).split("\n").length;
+}
+
+const CONTEXT_LINES = 2;
+
 /**
  * Build a diff string by eagerly applying edits to the current file content.
  * This allows the diff preview to be shown *before* the edit tool runs,
@@ -11,64 +27,54 @@ import { readFileSync } from "fs";
 export function buildEagerDiff(
   path: string,
   edits: Array<{ oldText: string; newText: string }>,
-): string | null {
-  let fileContent: string | null = null;
-  try {
-    fileContent = readFileSync(path, "utf-8");
-  } catch {
-    // File doesn't exist yet (new file) — no line numbers available.
-  }
-
-  const CONTEXT = 2;
-  const fileLines = fileContent !== null ? fileContent.split("\n") : [];
+): string {
+  const fileContent = tryReadFile(path);
+  const fileLines = fileContent?.split("\n") ?? [];
   const totalLines = fileLines.length;
+  const gutterWidth = String(totalLines).length;
 
-  const pad = (n: number) => String(n).padStart(String(totalLines).length, " ");
+  const pad = (n: number) => String(n).padStart(gutterWidth, " ");
+  const ctx  = (n: number) => ` ${pad(n)} ${fileLines[n - 1] ?? ""}`;
+  const del  = (n: number, line: string) => `-${pad(n)} ${line}`;
+  const add  = (n: number, line: string) => `+${pad(n)} ${line}`;
 
-  const lines: string[] = [];
+  const out: string[] = [];
   let lastEmittedLine = 0;
 
   for (const { oldText, newText } of edits) {
-    let oldStartLine = 1;
-    if (fileContent !== null) {
-      const idx = fileContent.indexOf(oldText);
-      if (idx !== -1) {
-        oldStartLine = fileContent.slice(0, idx).split("\n").length;
-      }
-    }
+    const startLine = fileContent != null ? findStartLine(fileContent, oldText) : 1;
+    const oldLines = oldText.split("\n");
+    const newLines = newText.split("\n");
+    const endLine = startLine + oldLines.length - 1;
 
-    const oldEditLines = oldText.split("\n");
-    const newEditLines = newText.split("\n");
+    // Gap separator between non-contiguous edits
+    const ctxStart = Math.max(lastEmittedLine + 1, startLine - CONTEXT_LINES);
+    if (lastEmittedLine > 0 && ctxStart > lastEmittedLine + 1) {
+      out.push(` ${" ".repeat(gutterWidth)} ...`);
+    }
 
     // Context before
-    const ctxStart = Math.max(lastEmittedLine + 1, oldStartLine - CONTEXT);
-    if (lastEmittedLine > 0 && ctxStart > lastEmittedLine + 1) {
-      lines.push(` ${" ".repeat(String(totalLines).length)} ...`);
-    }
-    for (let k = ctxStart; k < oldStartLine; k++) {
-      lines.push(` ${pad(k)} ${fileLines[k - 1] ?? ""}`);
-    }
-
-    // Removed lines
-    oldEditLines.forEach((line, j) => {
-      lines.push(`-${pad(oldStartLine + j)} ${line}`);
-    });
-    // Added lines
-    newEditLines.forEach((line, j) => {
-      lines.push(`+${pad(oldStartLine + j)} ${line}`);
-    });
-
+    for (let k = ctxStart; k < startLine; k++) out.push(ctx(k));
+    // Removed / added
+    for (let j = 0; j < oldLines.length; j++) out.push(del(startLine + j, oldLines[j]));
+    for (let j = 0; j < newLines.length; j++) out.push(add(startLine + j, newLines[j]));
     // Context after
-    const oldEndLine = oldStartLine + oldEditLines.length - 1;
-    const ctxEnd = Math.min(totalLines, oldEndLine + CONTEXT);
-    for (let k = oldEndLine + 1; k <= ctxEnd; k++) {
-      lines.push(` ${pad(k)} ${fileLines[k - 1] ?? ""}`);
-    }
+    const ctxEnd = Math.min(totalLines, endLine + CONTEXT_LINES);
+    for (let k = endLine + 1; k <= ctxEnd; k++) out.push(ctx(k));
 
     lastEmittedLine = ctxEnd;
   }
 
-  return lines.join("\n");
+  return out.join("\n");
+}
+
+/** Sentinel properties we attach to a Text component to cache the eager diff. */
+const CACHED_DIFF = Symbol("cachedEagerDiff");
+const CACHED_EDIT_COUNT = Symbol("cachedEditCount");
+
+interface TextWithCache extends Text {
+  [CACHED_DIFF]?: string;
+  [CACHED_EDIT_COUNT]?: number;
 }
 
 /**
@@ -95,10 +101,22 @@ export function registerEditTool(pi: ExtensionAPI) {
       let output = header;
 
       if (edits.length > 0) {
-        const diffStr = buildEagerDiff(path, edits);
-        if (diffStr) {
-          output += "\n\n" + renderDiff(diffStr);
+        const text = (context.lastComponent as TextWithCache | undefined) ?? new Text("", 0, 0);
+
+        // Recompute diff when edit count changes (args stream incrementally),
+        // but reuse the cache on re-renders after the tool has run (file is modified).
+        const cached = text as TextWithCache;
+        let diffStr = cached[CACHED_DIFF];
+        if (diffStr === undefined || cached[CACHED_EDIT_COUNT] !== edits.length) {
+          diffStr = buildEagerDiff(path, edits);
+          cached[CACHED_DIFF] = diffStr;
+          cached[CACHED_EDIT_COUNT] = edits.length;
         }
+
+        if (diffStr) output += "\n\n" + renderDiff(diffStr);
+
+        text.setText(output);
+        return text;
       }
 
       const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
