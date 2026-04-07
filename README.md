@@ -18,7 +18,9 @@ pi install https://github.com/burneikis/pi-nolo
 
 ### Note:
 
-There will be a keybing conflict with `ctrl+y` for cycling yolo mode, and `tui.editor.yank`, so I reccomend changing `~/.pi/agent/keybindings.json` to include `"tui.editor.yank": "ctrl+shift+y"`.
+There will be a keybing conflict with `ctrl+y` for cycling yolo mode, and `tui.editor.yank`, so I recommend changing `~/.pi/agent/keybindings.json` to include `"tui.editor.yank": "ctrl+shift+y"`.
+
+as of pi ~0.63.0, the edit tool diff is post-rendered rather than pre-rendered, so if you want to see the edit before accepting you need to `pi install git:github.com/burneikis/pi-pre-render-edit` as well.
 
 ## What it does
 
@@ -36,11 +38,11 @@ In non-interactive mode (no UI), all mutations are blocked by default.
 
 Use `/yolo` to cycle through three modes at any time during a session:
 
-| Mode | Footer label | Write/Edit | Bash |
-|------|-------------|-----------|------|
-| `off` (default) | `nolo` | confirm | confirm (safe cmds auto-approved) |
-| `writes` | `writes` | **auto-allow** | confirm (safe cmds auto-approved) |
-| `full` | `yolo` | **auto-allow** | **auto-allow** |
+| Mode            | Footer label | Write/Edit     | Bash                              |
+| --------------- | ------------ | -------------- | --------------------------------- |
+| `off` (default) | `nolo`       | confirm        | confirm (safe cmds auto-approved) |
+| `writes`        | `writes`     | **auto-allow** | confirm (safe cmds auto-approved) |
+| `full`          | `yolo`       | **auto-allow** | **auto-allow**                    |
 
 Each `/yolo` invocation advances to the next mode and wraps back around:
 
@@ -126,9 +128,17 @@ If you want to allow piped commands (at your own risk):
 ```json
 {
   "dangerousPatterns": [
-    "&&", "\\|\\|", ";", "`", "\\$\\(",
-    ">\\s", ">>",
-    "\\brm\\b", "\\bsudo\\b", "\\beval\\b", "\\bexec\\b"
+    "&&",
+    "\\|\\|",
+    ";",
+    "`",
+    "\\$\\(",
+    ">\\s",
+    ">>",
+    "\\brm\\b",
+    "\\bsudo\\b",
+    "\\beval\\b",
+    "\\bexec\\b"
   ]
 }
 ```
