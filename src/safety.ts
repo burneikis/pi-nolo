@@ -1,4 +1,4 @@
-import { STDOUT_REDIRECT_RE } from "./config.js";
+import { STDOUT_REDIRECT_RE, PREFIX_DANGEROUS_FLAGS } from "./config.js";
 
 // --- xargs command extractor ---
 
@@ -159,6 +159,9 @@ export function isSafeCommand(
           clean.startsWith(prefix + " ") ||
           clean.startsWith(prefix + "\n")
         ) {
+          // Check prefix-specific dangerous flags before accepting
+          const flags = PREFIX_DANGEROUS_FLAGS[prefix];
+          if (flags?.some((re) => re.test(clean))) return false;
           matched = true;
           break;
         }

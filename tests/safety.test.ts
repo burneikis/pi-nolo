@@ -346,3 +346,177 @@ describe("isSafeCommand -- custom prefixes / regexes", () => {
     assert.equal(safe(""), false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// New safe prefixes (branch additions)
+// ---------------------------------------------------------------------------
+describe("isSafeCommand -- new safe prefixes", () => {
+  it("allows cd", () => {
+    assert.equal(safe("cd /tmp"), true);
+  });
+
+  it("allows bare cd", () => {
+    assert.equal(safe("cd"), true);
+  });
+
+  it("allows basename", () => {
+    assert.equal(safe("basename /foo/bar.txt"), true);
+  });
+
+  it("allows dirname", () => {
+    assert.equal(safe("dirname /foo/bar.txt"), true);
+  });
+
+  it("allows realpath", () => {
+    assert.equal(safe("realpath ."), true);
+  });
+
+  it("allows readlink", () => {
+    assert.equal(safe("readlink -f /usr/bin/node"), true);
+  });
+
+  it("allows id", () => {
+    assert.equal(safe("id"), true);
+  });
+
+  it("allows hostname", () => {
+    assert.equal(safe("hostname"), true);
+  });
+
+  it("allows md5sum", () => {
+    assert.equal(safe("md5sum file.txt"), true);
+  });
+
+  it("allows sha256sum", () => {
+    assert.equal(safe("sha256sum file.txt"), true);
+  });
+
+  it("allows git blame", () => {
+    assert.equal(safe("git blame src/index.ts"), true);
+  });
+
+  it("allows git ls-files", () => {
+    assert.equal(safe("git ls-files"), true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// New segment dangerous patterns (fd exec, sort -o)
+// ---------------------------------------------------------------------------
+describe("isSafeCommand -- new segment dangerous patterns", () => {
+  it("blocks fd -x (exec)", () => {
+    assert.equal(safe("find . | fd -x rm"), false);
+  });
+
+  it("blocks fd -X (exec-batch)", () => {
+    assert.equal(safe("find . | fd -X rm"), false);
+  });
+
+  it("blocks fd --exec", () => {
+    assert.equal(safe("find . | fd --exec rm"), false);
+  });
+
+  it("blocks fd --exec-batch", () => {
+    assert.equal(safe("find . | fd --exec-batch rm"), false);
+  });
+
+  it("blocks sort -o (output to file)", () => {
+    assert.equal(safe("sort -o output.txt input.txt"), false);
+  });
+
+  it("blocks sort --output (output to file)", () => {
+    assert.equal(safe("sort --output sorted.txt input.txt"), false);
+  });
+
+  it("allows plain sort (no -o)", () => {
+    assert.equal(safe("sort names.txt"), true);
+  });
+
+  it("allows sort -r (not -o)", () => {
+    assert.equal(safe("sort -r names.txt"), true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PREFIX_DANGEROUS_FLAGS (git branch, git remote, git tag)
+// ---------------------------------------------------------------------------
+describe("isSafeCommand -- prefix dangerous flags", () => {
+  // git branch
+  it("allows git branch (list)", () => {
+    assert.equal(safe("git branch"), true);
+  });
+
+  it("allows git branch -a", () => {
+    assert.equal(safe("git branch -a"), true);
+  });
+
+  it("allows git branch -r", () => {
+    assert.equal(safe("git branch -r"), true);
+  });
+
+  it("blocks git branch -d", () => {
+    assert.equal(safe("git branch -d feature"), false);
+  });
+
+  it("blocks git branch -D", () => {
+    assert.equal(safe("git branch -D feature"), false);
+  });
+
+  it("blocks git branch -m", () => {
+    assert.equal(safe("git branch -m old new"), false);
+  });
+
+  it("blocks git branch -M", () => {
+    assert.equal(safe("git branch -M old new"), false);
+  });
+
+  it("blocks git branch -c", () => {
+    assert.equal(safe("git branch -c old new"), false);
+  });
+
+  it("blocks git branch -C", () => {
+    assert.equal(safe("git branch -C old new"), false);
+  });
+
+  // git remote
+  it("allows git remote (list)", () => {
+    assert.equal(safe("git remote"), true);
+  });
+
+  it("allows git remote -v", () => {
+    assert.equal(safe("git remote -v"), true);
+  });
+
+  it("blocks git remote add", () => {
+    assert.equal(safe("git remote add origin url"), false);
+  });
+
+  it("blocks git remote remove", () => {
+    assert.equal(safe("git remote remove origin"), false);
+  });
+
+  it("blocks git remote rename", () => {
+    assert.equal(safe("git remote rename origin upstream"), false);
+  });
+
+  it("blocks git remote set-url", () => {
+    assert.equal(safe("git remote set-url origin newurl"), false);
+  });
+
+  // git tag
+  it("allows git tag (list)", () => {
+    assert.equal(safe("git tag"), true);
+  });
+
+  it("allows git tag -l", () => {
+    assert.equal(safe("git tag -l 'v*'"), true);
+  });
+
+  it("blocks git tag -d", () => {
+    assert.equal(safe("git tag -d v1.0"), false);
+  });
+
+  it("blocks git tag -f", () => {
+    assert.equal(safe("git tag -f v1.0"), false);
+  });
+});

@@ -6,6 +6,7 @@ import type { NoloConfig } from "./types.js";
 // --- Defaults ---
 
 export const DEFAULT_SAFE_PREFIXES = [
+  "cd",
   "ls",
   "cat",
   "head",
@@ -27,10 +28,20 @@ export const DEFAULT_SAFE_PREFIXES = [
   "date",
   "uname",
   "printenv",
+  "basename",
+  "dirname",
+  "realpath",
+  "readlink",
+  "id",
+  "hostname",
+  "md5sum",
+  "sha256sum",
   "git status",
   "git log",
   "git diff",
   "git show",
+  "git blame",
+  "git ls-files",
   "git branch",
   "git remote",
   "git tag",
@@ -82,8 +93,20 @@ export const DEFAULT_SEGMENT_DANGEROUS_PATTERNS = [
   "^bash\\b",                          // bash used as a command
   "^exec\\b",                          // exec shell builtin
   "[ \\t]-(?:exec|execdir|ok|delete)\\b", // find flags that run or delete
+  "[ \\t]-(?:x|X)\\b",                   // fd -x/-X (exec)
+  "[ \\t]--(?:exec|exec-batch)\\b",       // fd --exec/--exec-batch
   "\\bsystem\\s*\\(",                  // awk/sed system() call
 ];
+
+// Per-prefix dangerous flags. These are checked only when a segment matches
+// the given safe prefix, avoiding false positives on other commands.
+// Patterns are tested against the segment string.
+export const PREFIX_DANGEROUS_FLAGS: Record<string, RegExp[]> = {
+  "git branch": [/\s-[dDmMcC]\b/],
+  "git remote": [/\s(?:add|remove|rename|set-url)\b/],
+  "git tag":    [/\s-[df]\b/],
+  "sort":        [/\s-o\b/, /\s--output\b/],
+};
 
 // Matches stdout redirects (> or >>). Only 2> (stderr) is exempted; any other
 // fd-prefixed or bare redirect is treated as a potential file write.
