@@ -95,8 +95,6 @@ export const DEFAULT_SEGMENT_DANGEROUS_PATTERNS = [
   "[ \\t]-(?:exec|execdir|ok|delete)\\b", // find flags that run or delete
   "[ \\t]-(?:x|X)\\b",                   // fd -x/-X (exec)
   "[ \\t]--(?:exec|exec-batch)\\b",       // fd --exec/--exec-batch
-  "[ \\t]-o\\b",                          // sort -o (output to file)
-  "[ \\t]--output\\b",                    // sort --output (output to file)
   "\\bsystem\\s*\\(",                  // awk/sed system() call
 ];
 
@@ -107,6 +105,7 @@ export const PREFIX_DANGEROUS_FLAGS: Record<string, RegExp[]> = {
   "git branch": [/\s-[dDmMcC]\b/],
   "git remote": [/\s(?:add|remove|rename|set-url)\b/],
   "git tag":    [/\s-[df]\b/],
+  "sort":        [/\s-o\b/, /\s--output\b/],
 };
 
 // Matches stdout redirects (> or >>). Only 2> (stderr) is exempted; any other
