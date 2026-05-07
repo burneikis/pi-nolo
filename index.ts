@@ -95,7 +95,9 @@ export default function (pi: ExtensionAPI) {
       const command = event.input.command as string;
       if (isSafeCommand(command, safePrefixes, dangerousRegexes, segmentDangerousRegexes)) return undefined;
 
-      const confirmed = await ctx.ui.confirm("Run command?");
+      const firstLine = command.split("\n")[0];
+      const preview = command.includes("\n") ? `${firstLine}...` : firstLine;
+      const confirmed = await ctx.ui.confirm("Run command?", preview);
       if (!confirmed) return { block: true, reason: "Blocked by user" };
     }
 
