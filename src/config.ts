@@ -108,6 +108,9 @@ export const PREFIX_DANGEROUS_FLAGS: Record<string, RegExp[]> = {
   "sort":        [/\s-o\b/, /\s--output\b/],
 };
 
+// Default YOLO-cycle shortcut. Configurable via `shortcut` in nolo.json.
+export const DEFAULT_SHORTCUT = "ctrl+y";
+
 // Matches stdout redirects (> or >>). Only 2> (stderr) is exempted; any other
 // fd-prefixed or bare redirect is treated as a potential file write.
 export const STDOUT_REDIRECT_RE = /(?<!2)>>?(?!&)/;
@@ -127,6 +130,7 @@ export interface LoadedConfig {
   safePrefixes: string[];
   dangerousRegexes: RegExp[];
   segmentDangerousRegexes: RegExp[];
+  shortcut: string;
 }
 
 export function loadConfig(): LoadedConfig {
@@ -136,12 +140,14 @@ export function loadConfig(): LoadedConfig {
   const globalCfg = loadJsonFile(globalPath);
   const projectCfg = loadJsonFile(projectPath);
 
-  // Merge safe prefixes: union of defaults + global + project
+  // Merge safe prefixes: union of defaults + global + project. Ignore
+  // non-array values so a malformed config (e.g. `{"safePrefixes": {}}`)
+  // can't throw and leave the write gate unregistered (fail-open).
   let safePrefixes = [...DEFAULT_SAFE_PREFIXES];
-  if (globalCfg?.safePrefixes) {
+  if (Array.isArray(globalCfg?.safePrefixes)) {
     safePrefixes = [...new Set([...safePrefixes, ...globalCfg.safePrefixes])];
   }
-  if (projectCfg?.safePrefixes) {
+  if (Array.isArray(projectCfg?.safePrefixes)) {
     safePrefixes = [...new Set([...safePrefixes, ...projectCfg.safePrefixes])];
   }
 
@@ -159,9 +165,36 @@ export function loadConfig(): LoadedConfig {
     segmentDangerousPatterns = projectCfg.segmentDangerousPatterns;
   }
 
+  // Shortcut: project overrides global overrides default. Only accept a
+  // non-empty string so malformed values fall back to the default.
+  let shortcut = DEFAULT_SHORTCUT;
+  if (typeof globalCfg?.shortcut === "string" && globalCfg.shortcut.trim()) {
+    shortcut = globalCfg.shortcut;
+  }
+  if (typeof projectCfg?.shortcut === "string" && projectCfg.shortcut.trim()) {
+    shortcut = projectCfg.shortcut;
+  }
+
   return {
     safePrefixes,
-    dangerousRegexes: dangerousPatterns.map((p) => new RegExp(p)),
-    segmentDangerousRegexes: segmentDangerousPatterns.map((p) => new RegExp(p)),
+    dangerousRegexes: compilePatterns(dangerousPatterns, DEFAULT_DANGEROUS_PATTERNS),
+    segmentDangerousRegexes: compilePatterns(
+      segmentDangerousPatterns,
+      DEFAULT_SEGMENT_DANGEROUS_PATTERNS,
+    ),
+    shortcut,
   };
+}
+
+// Compile a pattern list to regexes, falling back to the built-in defaults if
+// any entry is an invalid regex. loadConfig() runs during extension
+// registration, so a single malformed user pattern must not throw and leave the
+// write gate unregistered (fail-open). Defaults are known-valid, so the fallback
+// cannot throw.
+function compilePatterns(patterns: string[], fallback: string[]): RegExp[] {
+  try {
+    return patterns.map((p) => new RegExp(p));
+  } catch {
+    return fallback.map((p) => new RegExp(p));
+  }
 }

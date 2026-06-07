@@ -1,13 +1,13 @@
-import { describe, it, before, after } from "node:test";
+import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "fs";
 import { join } from "path";
-import { tmpdir } from "os";
 import {
   loadConfig,
   DEFAULT_SAFE_PREFIXES,
   DEFAULT_DANGEROUS_PATTERNS,
   DEFAULT_SEGMENT_DANGEROUS_PATTERNS,
+  DEFAULT_SHORTCUT,
 } from "../src/config.js";
 
 // loadConfig reads from homedir()/.pi/agent/nolo.json and .pi/nolo.json.
@@ -22,10 +22,12 @@ function cleanProjectCfg() {
 }
 
 describe("loadConfig", () => {
-  after(cleanProjectCfg);
+  // Clean before and after each test so a thrown assertion never leaks a
+  // leftover .pi/nolo.json into the next test.
+  beforeEach(cleanProjectCfg);
+  afterEach(cleanProjectCfg);
 
   it("returns defaults when no config files exist", () => {
-    cleanProjectCfg();
     const cfg = loadConfig();
     assert.deepEqual(cfg.safePrefixes, DEFAULT_SAFE_PREFIXES);
     assert.equal(cfg.dangerousRegexes.length, DEFAULT_DANGEROUS_PATTERNS.length);
@@ -38,7 +40,6 @@ describe("loadConfig", () => {
     const cfg = loadConfig();
     assert.ok(cfg.safePrefixes.includes("myctl status"));
     assert.ok(cfg.safePrefixes.includes("ls"), "defaults are preserved");
-    cleanProjectCfg();
   });
 
   it("project config deduplucates existing safe prefixes", () => {
@@ -47,7 +48,15 @@ describe("loadConfig", () => {
     const cfg = loadConfig();
     const lsCount = cfg.safePrefixes.filter((p) => p === "ls").length;
     assert.equal(lsCount, 1);
-    cleanProjectCfg();
+  });
+
+  it("falls back to defaults when safePrefixes is not an array", () => {
+    mkdirSync(".pi", { recursive: true });
+    writeFileSync(PROJECT_CFG, JSON.stringify({ safePrefixes: {} }));
+    // A non-array value must not throw during load (would leave the write
+    // gate unregistered); it falls back to the known-valid defaults.
+    const cfg = loadConfig();
+    assert.deepEqual(cfg.safePrefixes, DEFAULT_SAFE_PREFIXES);
   });
 
   it("project dangerousPatterns fully overrides defaults", () => {
@@ -56,11 +65,9 @@ describe("loadConfig", () => {
     const cfg = loadConfig();
     assert.equal(cfg.dangerousRegexes.length, 1);
     assert.ok(cfg.dangerousRegexes[0].test("kill 1234"));
-    cleanProjectCfg();
   });
 
   it("returns compiled RegExp objects for dangerous patterns", () => {
-    cleanProjectCfg();
     const cfg = loadConfig();
     for (const re of cfg.dangerousRegexes) {
       assert.ok(re instanceof RegExp);
@@ -73,7 +80,6 @@ describe("loadConfig", () => {
     // Should not throw; falls back to defaults
     const cfg = loadConfig();
     assert.deepEqual(cfg.safePrefixes, DEFAULT_SAFE_PREFIXES);
-    cleanProjectCfg();
   });
 
   it("project segmentDangerousPatterns fully overrides defaults", () => {
@@ -82,14 +88,60 @@ describe("loadConfig", () => {
     const cfg = loadConfig();
     assert.equal(cfg.segmentDangerousRegexes.length, 1);
     assert.ok(cfg.segmentDangerousRegexes[0].test("python script.py"));
-    cleanProjectCfg();
   });
 
   it("returns default segment dangerous regexes when not overridden", () => {
-    cleanProjectCfg();
     const cfg = loadConfig();
     for (const re of cfg.segmentDangerousRegexes) {
       assert.ok(re instanceof RegExp);
+    }
+  });
+
+  it("falls back to default dangerous patterns when a pattern is an invalid regex", () => {
+    mkdirSync(".pi", { recursive: true });
+    writeFileSync(PROJECT_CFG, JSON.stringify({ dangerousPatterns: ["("] }));
+    // An invalid user regex must not throw during load (would leave the write
+    // gate unregistered); it falls back to the known-valid defaults.
+    const cfg = loadConfig();
+    assert.equal(cfg.dangerousRegexes.length, DEFAULT_DANGEROUS_PATTERNS.length);
+  });
+
+  it("falls back to default segment patterns when a pattern is an invalid regex", () => {
+    mkdirSync(".pi", { recursive: true });
+    writeFileSync(PROJECT_CFG, JSON.stringify({ segmentDangerousPatterns: ["["] }));
+    const cfg = loadConfig();
+    assert.equal(
+      cfg.segmentDangerousRegexes.length,
+      DEFAULT_SEGMENT_DANGEROUS_PATTERNS.length,
+    );
+  });
+
+  it("returns the default shortcut when no config files exist", () => {
+    const cfg = loadConfig();
+    assert.equal(cfg.shortcut, DEFAULT_SHORTCUT);
+    assert.equal(cfg.shortcut, "ctrl+y");
+  });
+
+  // Override precedence is project > global > default. The test sandbox cannot
+  // safely write to the real homedir global path, so this only exercises the
+  // project override branch (the global branch in config.ts is structurally
+  // identical and remains untested).
+  it("project shortcut overrides the default", () => {
+    mkdirSync(".pi", { recursive: true });
+    writeFileSync(PROJECT_CFG, JSON.stringify({ shortcut: "ctrl+shift+y" }));
+    const cfg = loadConfig();
+    assert.equal(cfg.shortcut, "ctrl+shift+y");
+  });
+
+  it("falls back to the default when shortcut is malformed or empty", () => {
+    mkdirSync(".pi", { recursive: true });
+    for (const bad of [123, "   ", "", null, true, ["ctrl+y"], {}]) {
+      writeFileSync(PROJECT_CFG, JSON.stringify({ shortcut: bad }));
+      assert.equal(
+        loadConfig().shortcut,
+        DEFAULT_SHORTCUT,
+        `shortcut ${JSON.stringify(bad)} should fall back to default`,
+      );
     }
   });
 });

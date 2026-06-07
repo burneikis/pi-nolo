@@ -18,7 +18,7 @@ pi install https://github.com/burneikis/pi-nolo
 
 ### Note:
 
-There will be a keybing conflict with `ctrl+y` for cycling yolo mode, and `tui.editor.yank`, so I recommend changing `~/.pi/agent/keybindings.json` to include `"tui.editor.yank": "ctrl+shift+y"`.
+The default YOLO-cycle shortcut is `ctrl+y`, which conflicts with pi's built-in `tui.editor.yank`. Instead of editing pi's `keybindings.json`, you can move the extension's shortcut by setting `"shortcut": "ctrl+shift+y"` in your `nolo.json` (see [Configuration](#configuration)). Changing it takes effect after a `/reload`.
 
 ## What it does
 
@@ -102,7 +102,8 @@ You can customize the allowlist with a `nolo.json` config file:
 ```json
 {
   "safePrefixes": ["make build", "docker ps", "kubectl get"],
-  "dangerousPatterns": ["\\|", "&&", "\\brm\\b"]
+  "dangerousPatterns": ["\\|", "&&", "\\brm\\b"],
+  "shortcut": "ctrl+shift+y"
 }
 ```
 
@@ -110,6 +111,7 @@ You can customize the allowlist with a `nolo.json` config file:
 
 - **`safePrefixes`** — merged (union of defaults + global + project)
 - **`dangerousPatterns`** — overridden (project overrides global overrides defaults)
+- **`shortcut`** — overridden (project overrides global overrides default)
 
 If no config files exist, the hardcoded defaults are used. See [`nolo.example.json`](nolo.example.json) for the full default configuration.
 
@@ -148,6 +150,22 @@ If you want to allow piped commands (at your own risk):
 ```
 
 This replaces the defaults entirely, so the `\\|` (pipe) pattern is no longer checked.
+
+### Example: change the YOLO-cycle shortcut
+
+The `shortcut` field sets the key that cycles YOLO mode. It defaults to
+`ctrl+y`, which collides with pi's built-in `tui.editor.yank`. To avoid
+the conflict without touching pi's `keybindings.json`, pick another key:
+
+```json
+{
+  "shortcut": "ctrl+shift+y"
+}
+```
+
+The shortcut is resolved once when the extension loads, so changes take
+effect after a `/reload`. The `/yolo` slash command always works
+regardless of the configured shortcut.
 
 ## License
 

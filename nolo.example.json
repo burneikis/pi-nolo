@@ -16,5 +16,6 @@
     ">\\s", ">>",
     "\\brm\\b", "\\bsudo\\b", "\\beval\\b", "\\bexec\\b",
     "\\bsource\\b", "\\bsh\\b", "\\bbash\\b"
-  ]
+  ],
+  "shortcut": "ctrl+y"
 }

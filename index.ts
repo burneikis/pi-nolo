@@ -9,7 +9,7 @@
  *   segment -- checked per segment (sh/bash as commands, find -exec/-delete, system() calls)
  * Stderr redirects such as 2>/dev/null are allowed. Both pattern sets are configurable.
  *
- * YOLO modes (toggle with /yolo or ctrl+y):
+ * YOLO modes (toggle with /yolo or the configured shortcut, default ctrl+y):
  *   off        — default: confirm all writes/edits/bash (safe bash commands auto-approved)
  *   writes     — auto-allow all write/edit; bash still follows safe-prefix rules
  *   full       — auto-allow everything: write, edit, and all bash commands
@@ -27,6 +27,9 @@ import {
 import { registerPreRenderEdit } from "./src/pre-render-edit.js";
 
 export default function (pi: ExtensionAPI) {
+  // Resolve the YOLO-cycle shortcut once at load time. registerShortcut takes a
+  // literal key, so changing `shortcut` in nolo.json requires /reload to apply.
+  const { shortcut } = loadConfig();
   let safePrefixes = DEFAULT_SAFE_PREFIXES;
   let dangerousRegexes = DEFAULT_DANGEROUS_PATTERNS.map((p) => new RegExp(p));
   let segmentDangerousRegexes = DEFAULT_SEGMENT_DANGEROUS_PATTERNS.map((p) => new RegExp(p));
@@ -49,7 +52,7 @@ export default function (pi: ExtensionAPI) {
     registerPreRenderEdit(pi, ctx.cwd);
   });
 
-  // --- /yolo command and ctrl+y shortcut: cycle through modes ---
+  // --- /yolo command and configured shortcut: cycle through modes ---
 
   const cycleHandler = async (_argsOrEvent: unknown, ctx: any) => {
     cycleYoloMode(yolo, pi, ctx);
@@ -60,7 +63,7 @@ export default function (pi: ExtensionAPI) {
     handler: cycleHandler,
   });
 
-  pi.registerShortcut("ctrl+y", {
+  pi.registerShortcut(shortcut, {
     description: "Cycle YOLO mode: off → writes-yolo → full-yolo → off",
     handler: async (ctx) => cycleYoloMode(yolo, pi, ctx),
   });

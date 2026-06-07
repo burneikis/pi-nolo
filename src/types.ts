@@ -19,4 +19,5 @@ export interface NoloConfig {
   safePrefixes: string[];
   dangerousPatterns: string[];
   segmentDangerousPatterns: string[];
+  shortcut?: string;
 }
