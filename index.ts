@@ -70,9 +70,11 @@ export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     const { toolName } = event;
 
+    // Non-interactive (e.g. --mode json): no way to confirm, so don't gate.
+    if (!ctx.hasUI) return undefined;
+
     if (toolName === "write") {
       if (yolo.mode === "writes" || yolo.mode === "full") return undefined;
-      if (!ctx.hasUI) return { block: true, reason: "Blocked by user" };
 
       const path = event.input.path as string;
       const content = (event.input.content as string) ?? "";
@@ -83,14 +85,12 @@ export default function (pi: ExtensionAPI) {
 
     } else if (toolName === "edit") {
       if (yolo.mode === "writes" || yolo.mode === "full") return undefined;
-      if (!ctx.hasUI) return { block: true, reason: "Blocked by user" };
 
       const confirmed = await ctx.ui.confirm("Edit file?", event.input.path as string);
       if (!confirmed) return { block: true, reason: "Blocked by user" };
 
     } else if (toolName === "bash") {
       if (yolo.mode === "full") return undefined;
-      if (!ctx.hasUI) return { block: true, reason: "Blocked by user" };
 
       const command = event.input.command as string;
       if (isSafeCommand(command, safePrefixes, dangerousRegexes, segmentDangerousRegexes)) return undefined;
