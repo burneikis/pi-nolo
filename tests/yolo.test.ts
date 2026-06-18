@@ -5,8 +5,10 @@ import {
   restoreYoloMode,
   renderStatus,
   cycleYoloMode,
+  toggleScopeWrites,
+  restoreScopeWrites,
 } from "../src/yolo.js";
-import { YOLO_ENTRY_TYPE } from "../src/types.js";
+import { YOLO_ENTRY_TYPE, SCOPE_WRITES_ENTRY_TYPE } from "../src/types.js";
 
 // Minimal theme stub
 const theme = {
@@ -177,5 +179,52 @@ describe("cycleYoloMode", () => {
 
     cycleYoloMode(state, pi, ctx as any);
     assert.equal(state.mode, "writes"); // still cycles
+  });
+});
+
+describe("scope-writes", () => {
+  function makePi() {
+    const appended: Array<{ type: string; data: unknown }> = [];
+    return {
+      appended,
+      appendEntry(type: string, data: unknown) { appended.push({ type, data }); },
+    };
+  }
+  function makeCtx() {
+    const notifications: Array<{ msg: string; type: string }> = [];
+    return {
+      hasUI: true,
+      notifications,
+      ui: { notify: (msg: string, type: string) => notifications.push({ msg, type }) },
+    };
+  }
+
+  it("defaults to the value passed into createYoloState", () => {
+    assert.equal(createYoloState().scopeWrites, false);
+    assert.equal(createYoloState(true).scopeWrites, true);
+  });
+
+  it("toggleScopeWrites flips and persists", () => {
+    const state = createYoloState(false);
+    const pi = makePi() as any;
+    toggleScopeWrites(state, pi, makeCtx() as any);
+    assert.equal(state.scopeWrites, true);
+    assert.equal(pi.appended[0].type, SCOPE_WRITES_ENTRY_TYPE);
+    assert.equal((pi.appended[0].data as any).scopeWrites, true);
+  });
+
+  it("restoreScopeWrites restores from last entry", () => {
+    const state = createYoloState(false);
+    restoreScopeWrites(
+      [{ type: "custom", customType: SCOPE_WRITES_ENTRY_TYPE, data: { scopeWrites: true } }],
+      state,
+    );
+    assert.equal(state.scopeWrites, true);
+  });
+
+  it("restoreScopeWrites leaves default when no entry", () => {
+    const state = createYoloState(true);
+    restoreScopeWrites([], state);
+    assert.equal(state.scopeWrites, true);
   });
 });

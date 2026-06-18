@@ -13,16 +13,22 @@
  *   off        — default: confirm all writes/edits/bash (safe bash commands auto-approved)
  *   writes     — auto-allow all write/edit; bash still follows safe-prefix rules
  *   full       — auto-allow everything: write, edit, and all bash commands
+ *
+ * Scope-writes (config `defaultScopeWrites`, toggle live with /scopewrites): when on,
+ * `writes` mode still confirms write/edit calls that resolve outside the project root.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { resolve, sep } from "node:path";
 import { loadConfig, DEFAULT_SAFE_PREFIXES, DEFAULT_DANGEROUS_PATTERNS, DEFAULT_SEGMENT_DANGEROUS_PATTERNS } from "./src/config.js";
 import { isSafeCommand } from "./src/safety.js";
 import {
   createYoloState,
   restoreYoloMode,
+  restoreScopeWrites,
   renderStatus,
   cycleYoloMode,
+  toggleScopeWrites,
 } from "./src/yolo.js";
 import { registerPreRenderEdit } from "./src/pre-render-edit.js";
 
@@ -33,7 +39,15 @@ export default function (pi: ExtensionAPI) {
   let safePrefixes = DEFAULT_SAFE_PREFIXES;
   let dangerousRegexes = DEFAULT_DANGEROUS_PATTERNS.map((p) => new RegExp(p));
   let segmentDangerousRegexes = DEFAULT_SEGMENT_DANGEROUS_PATTERNS.map((p) => new RegExp(p));
+  let projectRoot = process.cwd();
   const yolo = createYoloState();
+
+  // True when scope-writes is on and the path resolves outside the project root.
+  const isOutsideRoot = (rawPath: string): boolean => {
+    if (!yolo.scopeWrites) return false;
+    const resolved = resolve(projectRoot, rawPath);
+    return resolved !== projectRoot && !resolved.startsWith(projectRoot + sep);
+  };
 
   // --- Session start: restore mode + reload config ---
 
@@ -42,8 +56,12 @@ export default function (pi: ExtensionAPI) {
     safePrefixes = config.safePrefixes;
     dangerousRegexes = config.dangerousRegexes;
     segmentDangerousRegexes = config.segmentDangerousRegexes;
+    projectRoot = ctx.cwd;
 
+    // Seed scope-writes from config, then let any persisted session toggle win.
+    yolo.scopeWrites = config.defaultScopeWrites;
     restoreYoloMode(ctx.sessionManager.getEntries(), yolo);
+    restoreScopeWrites(ctx.sessionManager.getEntries(), yolo);
 
     if (ctx.hasUI) {
       ctx.ui.setStatus("nolo", renderStatus(yolo, ctx.ui.theme));
@@ -68,6 +86,13 @@ export default function (pi: ExtensionAPI) {
     handler: async (ctx) => cycleYoloMode(yolo, pi, ctx),
   });
 
+  // --- /scopewrites command: toggle project-root confinement for writes mode ---
+
+  pi.registerCommand("scopewrites", {
+    description: "Toggle confirming write/edit outside the project root in writes mode",
+    handler: async (_args: unknown, ctx: any) => toggleScopeWrites(yolo, pi, ctx),
+  });
+
   // --- Tool gate ---
 
   pi.on("tool_call", async (event, ctx) => {
@@ -77,19 +102,23 @@ export default function (pi: ExtensionAPI) {
     if (!ctx.hasUI) return undefined;
 
     if (toolName === "write") {
-      if (yolo.mode === "writes" || yolo.mode === "full") return undefined;
+      if (yolo.mode === "full") return undefined;
+      if (yolo.mode === "writes" && !isOutsideRoot(event.input.path as string)) return undefined;
 
       const path = event.input.path as string;
       const content = (event.input.content as string) ?? "";
       const lines = content.split("\n").length;
 
-      const confirmed = await ctx.ui.confirm("Write file?", `${path} (${lines} lines)`);
+      const title = yolo.mode === "writes" ? "Write outside project root?" : "Write file?";
+      const confirmed = await ctx.ui.confirm(title, `${path} (${lines} lines)`);
       if (!confirmed) return { block: true, reason: "Blocked by user" };
 
     } else if (toolName === "edit") {
-      if (yolo.mode === "writes" || yolo.mode === "full") return undefined;
+      if (yolo.mode === "full") return undefined;
+      if (yolo.mode === "writes" && !isOutsideRoot(event.input.path as string)) return undefined;
 
-      const confirmed = await ctx.ui.confirm("Edit file?", event.input.path as string);
+      const title = yolo.mode === "writes" ? "Edit outside project root?" : "Edit file?";
+      const confirmed = await ctx.ui.confirm(title, event.input.path as string);
       if (!confirmed) return { block: true, reason: "Blocked by user" };
 
     } else if (toolName === "bash") {

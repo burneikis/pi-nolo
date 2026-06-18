@@ -61,6 +61,18 @@ The current mode is shown in the footer status bar. It is also persisted in the 
 - **`writes`** — you trust the edits but still want a gate on shell commands.
 - **`full`** — you want the agent to run completely hands-free. Use with caution.
 
+## Scope writes to the project root
+
+In `writes` mode, write/edit calls are normally auto-approved anywhere on disk. **Scope-writes** narrows this: when on, `writes` mode still confirms any write/edit whose path resolves **outside the project root** (`cwd`), so the agent can't silently edit files elsewhere. `off` and `full` modes are unaffected.
+
+- **Config default:** set `"defaultScopeWrites": true` in `nolo.json` (project overrides global overrides the built-in default of `false`).
+- **Toggle live:** run `/scopewrites` at any time during a session to flip it. The choice is persisted in the session so it survives a `/reload`.
+
+| scope-writes | `writes` mode write inside root | `writes` mode write outside root |
+| ------------ | ------------------------------- | -------------------------------- |
+| off (default)| **auto-allow**                  | **auto-allow**                   |
+| on           | **auto-allow**                  | confirm                          |
+
 ## Bash Command Allowlist
 
 Safe commands are auto-approved without a confirmation dialog. A command is considered safe when:
