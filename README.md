@@ -7,7 +7,7 @@ Read-safe bash commands (`ls`, `grep`, `git status`, etc.) are auto-approved via
 ## Install
 
 ```bash
-pi install npm:@burneikis/pi-nolo
+pi install npm:pi-nolo
 ```
 
 Or from git:
