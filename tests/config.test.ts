@@ -8,6 +8,7 @@ import {
   DEFAULT_SAFE_PREFIXES,
   DEFAULT_DANGEROUS_PATTERNS,
   DEFAULT_SEGMENT_DANGEROUS_PATTERNS,
+  DEFAULT_SHORTCUT,
 } from "../src/config.js";
 
 // loadConfig reads from homedir()/.pi/agent/nolo.json and .pi/nolo.json.
@@ -91,5 +92,37 @@ describe("loadConfig", () => {
     for (const re of cfg.segmentDangerousRegexes) {
       assert.ok(re instanceof RegExp);
     }
+  });
+
+  it("returns the default shortcut when no config files exist", () => {
+    cleanProjectCfg();
+    const cfg = loadConfig();
+    assert.equal(cfg.shortcut, DEFAULT_SHORTCUT);
+    assert.equal(cfg.shortcut, "ctrl+y");
+  });
+
+  // Override precedence is project > global > default. The test sandbox cannot
+  // safely write to the real homedir global path, so this only exercises the
+  // project override branch (the global branch in config.ts is structurally
+  // identical and remains untested).
+  it("project shortcut overrides the default", () => {
+    mkdirSync(".pi", { recursive: true });
+    writeFileSync(PROJECT_CFG, JSON.stringify({ shortcut: "ctrl+shift+y" }));
+    const cfg = loadConfig();
+    assert.equal(cfg.shortcut, "ctrl+shift+y");
+    cleanProjectCfg();
+  });
+
+  it("falls back to the default when shortcut is malformed or empty", () => {
+    mkdirSync(".pi", { recursive: true });
+    for (const bad of [123, "   ", "", null, true, ["ctrl+y"], {}]) {
+      writeFileSync(PROJECT_CFG, JSON.stringify({ shortcut: bad }));
+      assert.equal(
+        loadConfig().shortcut,
+        DEFAULT_SHORTCUT,
+        `shortcut ${JSON.stringify(bad)} should fall back to default`,
+      );
+    }
+    cleanProjectCfg();
   });
 });

@@ -108,6 +108,9 @@ export const PREFIX_DANGEROUS_FLAGS: Record<string, RegExp[]> = {
   "sort":        [/\s-o\b/, /\s--output\b/],
 };
 
+// Default YOLO-cycle shortcut. Configurable via `shortcut` in nolo.json.
+export const DEFAULT_SHORTCUT = "ctrl+y";
+
 // Matches stdout redirects (> or >>). Only 2> (stderr) is exempted; any other
 // fd-prefixed or bare redirect is treated as a potential file write.
 export const STDOUT_REDIRECT_RE = /(?<!2)>>?(?!&)/;
@@ -127,6 +130,7 @@ export interface LoadedConfig {
   safePrefixes: string[];
   dangerousRegexes: RegExp[];
   segmentDangerousRegexes: RegExp[];
+  shortcut: string;
 }
 
 export function loadConfig(): LoadedConfig {
@@ -159,9 +163,20 @@ export function loadConfig(): LoadedConfig {
     segmentDangerousPatterns = projectCfg.segmentDangerousPatterns;
   }
 
+  // Shortcut: project overrides global overrides default. Only accept a
+  // non-empty string so malformed values fall back to the default.
+  let shortcut = DEFAULT_SHORTCUT;
+  if (typeof globalCfg?.shortcut === "string" && globalCfg.shortcut.trim()) {
+    shortcut = globalCfg.shortcut;
+  }
+  if (typeof projectCfg?.shortcut === "string" && projectCfg.shortcut.trim()) {
+    shortcut = projectCfg.shortcut;
+  }
+
   return {
     safePrefixes,
     dangerousRegexes: dangerousPatterns.map((p) => new RegExp(p)),
     segmentDangerousRegexes: segmentDangerousPatterns.map((p) => new RegExp(p)),
+    shortcut,
   };
 }
