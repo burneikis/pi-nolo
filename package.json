@@ -1,5 +1,5 @@
 {
-  "name": "@burneikis/pi-nolo",
+  "name": "pi-nolo",
   "version": "1.2.0",
   "description": "No-YOLO mode for pi — gates write, edit, and bash tool calls behind user confirmation with configurable safe-command allowlists and YOLO override modes.",
   "keywords": [
