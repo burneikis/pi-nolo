@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { YOLO_MODES, YOLO_LABELS, YOLO_ENTRY_TYPE } from "./types.js";
+import { YOLO_MODES, YOLO_LABELS, YOLO_ENTRY_TYPE, SCOPE_WRITES_ENTRY_TYPE } from "./types.js";
 import type { YoloMode } from "./types.js";
 
 export type { YoloMode };
@@ -7,10 +7,47 @@ export type { YoloMode };
 /** Mutable YOLO state shared across the extension lifecycle. */
 export interface YoloState {
   mode: YoloMode;
+  /** When true, `writes` mode confirms write/edit calls outside the project root. */
+  scopeWrites: boolean;
 }
 
-export function createYoloState(): YoloState {
-  return { mode: "off" };
+export function createYoloState(scopeWrites = false): YoloState {
+  return { mode: "off", scopeWrites };
+}
+
+/**
+ * Restore the persisted scope-writes toggle from session history. Falls back to
+ * the provided default when no entry is found (call on session_start).
+ */
+export function restoreScopeWrites(
+  entries: Array<{ type: string; customType?: string; data?: unknown }>,
+  state: YoloState,
+): void {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry.type === "custom" && entry.customType === SCOPE_WRITES_ENTRY_TYPE) {
+      const saved = (entry.data as { scopeWrites?: boolean })?.scopeWrites;
+      if (typeof saved === "boolean") state.scopeWrites = saved;
+      break;
+    }
+  }
+}
+
+/** Toggle scope-writes, persist to session, and notify the user. */
+export function toggleScopeWrites(
+  state: YoloState,
+  pi: ExtensionAPI,
+  ctx: { hasUI: boolean; ui: { notify: (msg: string, type: string) => void } },
+): void {
+  state.scopeWrites = !state.scopeWrites;
+  pi.appendEntry(SCOPE_WRITES_ENTRY_TYPE, { scopeWrites: state.scopeWrites });
+
+  if (!ctx.hasUI) return;
+  if (state.scopeWrites) {
+    ctx.ui.notify("scope-writes ON — writes mode confirms edits outside the project root", "info");
+  } else {
+    ctx.ui.notify("scope-writes OFF — writes mode auto-approves edits anywhere", "info");
+  }
 }
 
 /** Restore persisted mode from the session history (call on session_start). */

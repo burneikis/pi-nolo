@@ -111,6 +111,9 @@ export const PREFIX_DANGEROUS_FLAGS: Record<string, RegExp[]> = {
 // Default YOLO-cycle shortcut. Configurable via `shortcut` in nolo.json.
 export const DEFAULT_SHORTCUT = "ctrl+y";
 
+// Default for the scope-writes toggle. Configurable via `defaultScopeWrites`.
+export const DEFAULT_SCOPE_WRITES = false;
+
 // Matches stdout redirects (> or >>). Only 2> (stderr) is exempted; any other
 // fd-prefixed or bare redirect is treated as a potential file write.
 export const STDOUT_REDIRECT_RE = /(?<!2)>>?(?!&)/;
@@ -131,6 +134,7 @@ export interface LoadedConfig {
   dangerousRegexes: RegExp[];
   segmentDangerousRegexes: RegExp[];
   shortcut: string;
+  defaultScopeWrites: boolean;
 }
 
 export function loadConfig(): LoadedConfig {
@@ -173,10 +177,20 @@ export function loadConfig(): LoadedConfig {
     shortcut = projectCfg.shortcut;
   }
 
+  // Scope-writes default: project overrides global overrides default.
+  let defaultScopeWrites = DEFAULT_SCOPE_WRITES;
+  if (typeof globalCfg?.defaultScopeWrites === "boolean") {
+    defaultScopeWrites = globalCfg.defaultScopeWrites;
+  }
+  if (typeof projectCfg?.defaultScopeWrites === "boolean") {
+    defaultScopeWrites = projectCfg.defaultScopeWrites;
+  }
+
   return {
     safePrefixes,
     dangerousRegexes: dangerousPatterns.map((p) => new RegExp(p)),
     segmentDangerousRegexes: segmentDangerousPatterns.map((p) => new RegExp(p)),
     shortcut,
+    defaultScopeWrites,
   };
 }

@@ -125,4 +125,23 @@ describe("loadConfig", () => {
     }
     cleanProjectCfg();
   });
+
+  it("defaults scope-writes to false when no config exists", () => {
+    cleanProjectCfg();
+    assert.equal(loadConfig().defaultScopeWrites, false);
+  });
+
+  it("project defaultScopeWrites overrides the default", () => {
+    mkdirSync(".pi", { recursive: true });
+    writeFileSync(PROJECT_CFG, JSON.stringify({ defaultScopeWrites: true }));
+    assert.equal(loadConfig().defaultScopeWrites, true);
+    cleanProjectCfg();
+  });
+
+  it("ignores non-boolean defaultScopeWrites values", () => {
+    mkdirSync(".pi", { recursive: true });
+    writeFileSync(PROJECT_CFG, JSON.stringify({ defaultScopeWrites: "yes" }));
+    assert.equal(loadConfig().defaultScopeWrites, false);
+    cleanProjectCfg();
+  });
 });
