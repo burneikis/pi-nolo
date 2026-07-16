@@ -1,3 +1,4 @@
+import { resolve as resolvePath, normalize as normalizePath } from "node:path";
 import { STDOUT_REDIRECT_RE, PREFIX_DANGEROUS_FLAGS } from "./config.js";
 
 // --- xargs command extractor ---
@@ -36,17 +37,33 @@ export function getXargsCommand(segment: string): string | null {
 
 // --- Quote-aware shell operator splitter ---
 
+export type ShellOperator = "|" | "||" | "&&" | ";";
+
+export interface CommandSegment {
+  text: string;
+  /** Operator between this segment and the previous one; null for the first. */
+  prevOp: ShellOperator | null;
+}
+
 /**
- * Splits a command on |, ||, &&, and ; but ignores operators that appear
- * inside single or double quoted strings. This prevents false splits on
- * grep patterns like "foo\|bar" or awk programs like '{print $1|"sort"}'.
+ * Splits a command on |, ||, &&, and ; keeping the operator that precedes
+ * each segment. Operators inside single or double quoted strings are ignored,
+ * preventing false splits on grep patterns like "foo\|bar" or awk programs
+ * like '{print $1|"sort"}'.
  */
-export function splitOnShellOperators(command: string): string[] {
-  const segments: string[] = [];
+export function splitOnShellOperatorsWithOps(command: string): CommandSegment[] {
+  const segments: CommandSegment[] = [];
   let current = "";
+  let prevOp: ShellOperator | null = null;
   let inSingle = false;
   let inDouble = false;
   let i = 0;
+
+  const push = (op: ShellOperator | null) => {
+    segments.push({ text: current, prevOp });
+    current = "";
+    prevOp = op as ShellOperator | null;
+  };
 
   while (i < command.length) {
     const ch = command[i];
@@ -60,17 +77,27 @@ export function splitOnShellOperators(command: string): string[] {
       current += ch;
       i++;
     } else if (!inSingle && !inDouble) {
-      if (command.startsWith("||", i)) {
-        segments.push(current);
-        current = "";
+      if (ch === "\\" && command[i + 1] === "\n") {
+        // Backslash-newline is a line continuation, not a separator.
+        current += " ";
+        i += 2;
+      } else if (command.startsWith("||", i)) {
+        push("||");
         i += 2;
       } else if (command.startsWith("&&", i)) {
-        segments.push(current);
-        current = "";
+        push("&&");
         i += 2;
-      } else if (ch === "|" || ch === ";") {
-        segments.push(current);
-        current = "";
+      } else if (ch === "|") {
+        push("|");
+        i++;
+      } else if (ch === ";") {
+        push(";");
+        i++;
+      } else if (ch === "\n") {
+        // A bare newline separates commands exactly like `;`. Without this,
+        // anything after a newline would piggyback on the first line's prefix
+        // match (e.g. "ls\ncurl ..." would be auto-approved).
+        push(";");
         i++;
       } else {
         current += ch;
@@ -82,8 +109,37 @@ export function splitOnShellOperators(command: string): string[] {
     }
   }
 
-  if (current) segments.push(current);
+  if (current) segments.push({ text: current, prevOp });
   return segments;
+}
+
+/**
+ * Splits a command on |, ||, &&, and ; but ignores operators that appear
+ * inside single or double quoted strings.
+ */
+export function splitOnShellOperators(command: string): string[] {
+  return splitOnShellOperatorsWithOps(command).map((s) => s.text);
+}
+
+// --- cd tracking ---
+
+// Literal cd target: path chars only -- no spaces, quotes, `$`, `~`, or
+// backslashes, so the resolved directory is knowable statically.
+const CD_ARG_RE = /^[A-Za-z0-9_@%+=:,.\/-]+$/;
+
+/**
+ * Returns the working directory after a `cd` segment, or null when it cannot
+ * be determined statically. `prevCwd` is the tracked directory before the cd
+ * (used to resolve relative targets).
+ */
+function trackCd(clean: string, prevCwd: string | null): string | null {
+  const arg = clean.slice(2).trim();
+  if (!arg) return null; // bare cd (home) -- do not track
+  if (arg.includes(SUBST_PLACEHOLDER)) return null;
+  if (!CD_ARG_RE.test(arg)) return null;
+  if (arg.startsWith("/")) return normalizePath(arg);
+  if (prevCwd) return resolvePath(prevCwd, arg);
+  return null;
 }
 
 // --- Command substitutions ---
@@ -194,12 +250,30 @@ export function expandVars(segment: string, vars: Map<string, string>): string {
  * word-split by the shell, never re-parsed for operators, so a safe inner
  * command's output can only become arguments). Any unsafe, empty, or
  * unbalanced substitution fails the check. Backticks are always unsafe.
+ *
+ * `cd <literal-dir>` is tracked so that a later `./x` or `../x` command word
+ * can be resolved to an absolute path before prefix matching. The tracked
+ * directory always survives `&&` boundaries (the shell guarantees the cd
+ * succeeded in the main shell). It additionally survives `;` when the target
+ * was verified via opts.isExecutableDir at check time -- a verified cd cannot
+ * fail, so post-`;` segments really do run there. `|` and `||` always
+ * invalidate (subshelled or conditionally-skipped cds are independent of
+ * whether the directory exists).
  */
+export interface SafeCommandOptions {
+  /**
+   * Returns true when the path is an existing, traversable directory.
+   * Enables keeping the tracked cwd across `;` boundaries.
+   */
+  isExecutableDir?: (path: string) => boolean;
+}
+
 export function isSafeCommand(
   command: string,
   safePrefixes: string[],
   dangerousRegexes: RegExp[],
   segmentDangerousRegexes: RegExp[],
+  opts: SafeCommandOptions = {},
   depth = 0,
 ): boolean {
   let trimmed = command.trim();
@@ -213,7 +287,7 @@ export function isSafeCommand(
   if (spans.length > 0 && depth < MAX_SUBST_DEPTH) {
     for (const span of spans) {
       if (
-        !isSafeCommand(span.inner, safePrefixes, dangerousRegexes, segmentDangerousRegexes, depth + 1)
+        !isSafeCommand(span.inner, safePrefixes, dangerousRegexes, segmentDangerousRegexes, opts, depth + 1)
       ) {
         return false;
       }
@@ -235,17 +309,28 @@ export function isSafeCommand(
   // individually. A compound read-only command like
   //   ls foo && cat bar | head -20 2>/dev/null
   // is safe as long as each segment (ls, cat, head) is a safe prefix.
-  const segments = splitOnShellOperators(trimmed);
-  if (segments.every((s) => !s.trim())) return false;
+  const segments = splitOnShellOperatorsWithOps(trimmed);
+  if (segments.every((s) => !s.text.trim())) return false;
 
   const vars = new Map<string, string>();
+  let cwd: string | null = null;
+  let cwdVerified = false;
 
-  for (const segment of segments) {
+  for (const { text, prevOp } of segments) {
+    // A tracked cwd always survives && boundaries. It survives `;` only when
+    // the cd target was fs-verified (a verified cd cannot fail, so post-`;`
+    // segments really run there). `|` / `||` always invalidate: the cd may
+    // have run in a subshell or been skipped regardless of the filesystem.
+    if (prevOp !== null && prevOp !== "&&" && !(prevOp === ";" && cwdVerified)) {
+      cwd = null;
+      cwdVerified = false;
+    }
+
     // Expand variables assigned earlier in this command before any checks.
-    const expanded = expandVars(segment, vars);
+    const expanded = expandVars(text, vars);
 
     // Strip fd/stderr redirects (e.g. 2>/dev/null, 2>&1) before checks.
-    const clean = expanded.replace(/\s+\d*>(?:&\d+|\S*)/g, "").trim();
+    let clean = expanded.replace(/\s+\d*>(?:&\d+|\S*)/g, "").trim();
     if (!clean) continue;
 
     // Standalone literal assignment: record it and treat the segment as safe.
@@ -253,6 +338,20 @@ export function isSafeCommand(
     if (assign) {
       vars.set(assign[1], assign[2]);
       continue;
+    }
+
+    // Track cd targets (the segment itself still goes through prefix checks).
+    // A cd preceded by | or || runs in a subshell or conditionally, so its
+    // target must not be trusted; cwd was already invalidated above.
+    if (clean === "cd" || clean.startsWith("cd ")) {
+      cwd = prevOp === "|" || prevOp === "||" ? null : trackCd(clean, cwd);
+      cwdVerified = cwd !== null && opts.isExecutableDir?.(cwd) === true;
+    } else if (cwd && (clean.startsWith("./") || clean.startsWith("../"))) {
+      // Resolve a relative command word against the tracked directory so it
+      // can match absolute-path safe prefixes.
+      const sp = clean.search(/\s/);
+      const word = sp === -1 ? clean : clean.slice(0, sp);
+      clean = resolvePath(cwd, word) + (sp === -1 ? "" : clean.slice(sp));
     }
 
     // Segment check: dangerous flags or calls within otherwise-safe commands.
@@ -282,11 +381,7 @@ export function isSafeCommand(
 
     if (!matched) {
       for (const prefix of safePrefixes) {
-        if (
-          clean === prefix ||
-          clean.startsWith(prefix + " ") ||
-          clean.startsWith(prefix + "\n")
-        ) {
+        if (clean === prefix || clean.startsWith(prefix + " ")) {
           // Check prefix-specific dangerous flags before accepting
           const flags = PREFIX_DANGEROUS_FLAGS[prefix];
           if (flags?.some((re) => re.test(clean))) return false;
