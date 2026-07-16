@@ -18,7 +18,8 @@ import {
 
 const PROJECT_CFG = join(".pi", "nolo.json");
 const EMPTY_HOME = join(tmpdir(), "pi-nolo-test-empty-home");
-const loadConfig = () => loadConfigFromDisk({ homeDir: EMPTY_HOME });
+const loadConfig = (extra: { env?: Record<string, string | undefined> } = {}) =>
+  loadConfigFromDisk({ homeDir: EMPTY_HOME, ...extra });
 
 function cleanProjectCfg() {
   if (existsSync(PROJECT_CFG)) rmSync(PROJECT_CFG, { force: true });
@@ -144,6 +145,36 @@ describe("loadConfig", () => {
     mkdirSync(".pi", { recursive: true });
     writeFileSync(PROJECT_CFG, JSON.stringify({ defaultScopeWrites: "yes" }));
     assert.equal(loadConfig().defaultScopeWrites, false);
+    cleanProjectCfg();
+  });
+
+  it("defaults strictNonInteractive to false when no config exists", () => {
+    cleanProjectCfg();
+    assert.equal(loadConfig({ env: {} }).strictNonInteractive, false);
+  });
+
+  it("project strictNonInteractive overrides the default", () => {
+    mkdirSync(".pi", { recursive: true });
+    writeFileSync(PROJECT_CFG, JSON.stringify({ strictNonInteractive: true }));
+    assert.equal(loadConfig({ env: {} }).strictNonInteractive, true);
+    cleanProjectCfg();
+  });
+
+  it("ignores non-boolean strictNonInteractive values", () => {
+    mkdirSync(".pi", { recursive: true });
+    writeFileSync(PROJECT_CFG, JSON.stringify({ strictNonInteractive: "yes" }));
+    assert.equal(loadConfig({ env: {} }).strictNonInteractive, false);
+    cleanProjectCfg();
+  });
+
+  it("NOLO_STRICT env var overrides config", () => {
+    mkdirSync(".pi", { recursive: true });
+    writeFileSync(PROJECT_CFG, JSON.stringify({ strictNonInteractive: false }));
+    assert.equal(loadConfig({ env: { NOLO_STRICT: "1" } }).strictNonInteractive, true);
+    assert.equal(loadConfig({ env: { NOLO_STRICT: "true" } }).strictNonInteractive, true);
+    writeFileSync(PROJECT_CFG, JSON.stringify({ strictNonInteractive: true }));
+    assert.equal(loadConfig({ env: { NOLO_STRICT: "0" } }).strictNonInteractive, false);
+    assert.equal(loadConfig({ env: { NOLO_STRICT: "false" } }).strictNonInteractive, false);
     cleanProjectCfg();
   });
 });

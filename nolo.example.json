@@ -81,5 +81,6 @@
     "\\bsystem\\s*\\("
   ],
   "shortcut": "ctrl+y",
-  "defaultScopeWrites": false
+  "defaultScopeWrites": false,
+  "strictNonInteractive": false
 }

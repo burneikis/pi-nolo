@@ -23,6 +23,11 @@
  *
  * Scope-writes (config `defaultScopeWrites`, toggle live with /scopewrites): when on,
  * `writes` mode still confirms write/edit calls that resolve outside the project root.
+ *
+ * Strict non-interactive (config `strictNonInteractive`, or env NOLO_STRICT=1/0): when
+ * running without a UI (e.g. `pi -p` / --mode json) there is no way to confirm, so by
+ * default nothing is gated. With strict mode on, write/edit and unsafe bash commands
+ * are instantly blocked instead; safe read-only bash commands still run.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -61,6 +66,7 @@ export default function (pi: ExtensionAPI) {
   let dangerousRegexes = DEFAULT_DANGEROUS_PATTERNS.map((p) => new RegExp(p));
   let segmentDangerousRegexes = DEFAULT_SEGMENT_DANGEROUS_PATTERNS.map((p) => new RegExp(p));
   let projectRoot = process.cwd();
+  let strictNonInteractive = loadConfig().strictNonInteractive;
   const yolo = createYoloState();
 
   // True when scope-writes is on and the path resolves outside the project root.
@@ -77,6 +83,7 @@ export default function (pi: ExtensionAPI) {
     safePrefixes = config.safePrefixes;
     dangerousRegexes = config.dangerousRegexes;
     segmentDangerousRegexes = config.segmentDangerousRegexes;
+    strictNonInteractive = config.strictNonInteractive;
     projectRoot = ctx.cwd;
 
     // Seed scope-writes from config, then let any persisted session toggle win.
@@ -119,8 +126,33 @@ export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     const { toolName } = event;
 
-    // Non-interactive (e.g. --mode json): no way to confirm, so don't gate.
-    if (!ctx.hasUI) return undefined;
+    // Non-interactive (e.g. `pi -p` / --mode json): no way to confirm.
+    // Default: don't gate. In strict mode: instantly block anything that
+    // would have required confirmation (write/edit and unsafe bash).
+    if (!ctx.hasUI) {
+      if (!strictNonInteractive) return undefined;
+      if (toolName === "write" || toolName === "edit") {
+        return {
+          block: true,
+          reason: `Blocked by nolo strict non-interactive mode: ${toolName} is not allowed`,
+        };
+      }
+      if (toolName === "bash") {
+        const command = event.input.command as string;
+        if (
+          isSafeCommand(command, safePrefixes, dangerousRegexes, segmentDangerousRegexes, {
+            isExecutableDir,
+          })
+        ) {
+          return undefined;
+        }
+        return {
+          block: true,
+          reason: "Blocked by nolo strict non-interactive mode: command is not read-only safe",
+        };
+      }
+      return undefined;
+    }
 
     if (toolName === "write") {
       if (yolo.mode === "full") return undefined;

@@ -28,4 +28,11 @@ export interface NoloConfig {
    * project root. Can be toggled live with /scopewrites. Default: false.
    */
   defaultScopeWrites?: boolean;
+  /**
+   * When true and running without a UI (e.g. `pi -p` / --mode json), block
+   * write/edit and unsafe bash commands instead of allowing everything.
+   * Safe read-only bash commands still run. Overridable via the NOLO_STRICT
+   * env var (1/true to enable, 0/false to disable). Default: false.
+   */
+  strictNonInteractive?: boolean;
 }

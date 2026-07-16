@@ -30,7 +30,16 @@ Every time the agent tries to:
 
 You get a dialog: Enter to allow, Escape to block.
 
-In non-interactive mode (no UI), all mutations are blocked by default.
+In non-interactive mode (no UI, e.g. `pi -p` or `--mode json`) nothing is gated by default, since there is no way to confirm. Enable **strict non-interactive** mode to instantly block anything that would have required confirmation instead:
+
+- **Config:** set `"strictNonInteractive": true` in `nolo.json` (project overrides global).
+- **Env var:** `NOLO_STRICT=1` (or `true`) enables it, `NOLO_STRICT=0` disables it; the env var overrides config.
+
+With strict mode on, `write`/`edit` calls and non-read-only bash commands are blocked with a clear reason; safe read-only bash commands still run. Example:
+
+```bash
+NOLO_STRICT=1 pi -p "Review the code in src/"
+```
 
 ## Pre-rendered edit diffs
 

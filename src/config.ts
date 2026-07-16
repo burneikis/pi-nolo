@@ -156,6 +156,10 @@ export const DEFAULT_SHORTCUT = "ctrl+y";
 // Default for the scope-writes toggle. Configurable via `defaultScopeWrites`.
 export const DEFAULT_SCOPE_WRITES = false;
 
+// Default for strict non-interactive mode. Configurable via
+// `strictNonInteractive` in nolo.json or the NOLO_STRICT env var.
+export const DEFAULT_STRICT_NON_INTERACTIVE = false;
+
 // Matches stdout redirects (> or >>). Only 2> (stderr) is exempted; any other
 // fd-prefixed or bare redirect is treated as a potential file write.
 export const STDOUT_REDIRECT_RE = /(?<!2)>>?(?!&)/;
@@ -177,12 +181,15 @@ export interface LoadedConfig {
   segmentDangerousRegexes: RegExp[];
   shortcut: string;
   defaultScopeWrites: boolean;
+  strictNonInteractive: boolean;
 }
 
 export interface LoadConfigOptions {
   /** Override config roots (primarily for hermetic tests). */
   homeDir?: string;
   projectDir?: string;
+  /** Override env source (primarily for hermetic tests). */
+  env?: Record<string, string | undefined>;
 }
 
 export function loadConfig(opts: LoadConfigOptions = {}): LoadedConfig {
@@ -234,11 +241,26 @@ export function loadConfig(opts: LoadConfigOptions = {}): LoadedConfig {
     defaultScopeWrites = projectCfg.defaultScopeWrites;
   }
 
+  // Strict non-interactive: project overrides global overrides default;
+  // the NOLO_STRICT env var overrides everything.
+  let strictNonInteractive = DEFAULT_STRICT_NON_INTERACTIVE;
+  if (typeof globalCfg?.strictNonInteractive === "boolean") {
+    strictNonInteractive = globalCfg.strictNonInteractive;
+  }
+  if (typeof projectCfg?.strictNonInteractive === "boolean") {
+    strictNonInteractive = projectCfg.strictNonInteractive;
+  }
+  const envStrict = (opts.env ?? process.env).NOLO_STRICT;
+  if (envStrict !== undefined) {
+    strictNonInteractive = envStrict === "1" || envStrict.toLowerCase() === "true";
+  }
+
   return {
     safePrefixes,
     dangerousRegexes: dangerousPatterns.map((p) => new RegExp(p)),
     segmentDangerousRegexes: segmentDangerousPatterns.map((p) => new RegExp(p)),
     shortcut,
     defaultScopeWrites,
+    strictNonInteractive,
   };
 }
