@@ -247,6 +247,111 @@ function isPlainGitRefCreation(clean: string, prefix: string): boolean {
   return !rest.startsWith("-") || /^--\s+\S/.test(rest);
 }
 
+// --- sed read-only validation ---
+
+// Combinable short flags that cannot change sed's read-only nature:
+// -n (quiet), -u (unbuffered), -z (null-data), -s (separate), -E/-r (ERE).
+const SED_SAFE_SHORT_FLAG_RE = /^-[nuzsEr]+$/;
+const SED_SAFE_LONG_FLAGS = new Set([
+  "--quiet", "--silent", "--unbuffered", "--null-data", "--separate",
+  "--regexp-extended", "--posix", "--sandbox",
+]);
+
+// Read-only sed script grammar: optional numeric / last-line ($) addresses
+// followed by p (print), d (delete from stream), = (line number), or q
+// (quit, optional exit code); atoms may be joined with `;`. This excludes by
+// construction everything that can write or execute: w/W and s///w (write
+// files), e and s///e (run commands), r/R and regex addresses (kept out to
+// stay minimal and unambiguous), and s in general.
+const SED_ADDR = String.raw`(?:\d+(?:~\d+)?|\$)(?:,(?:\d+|\$))?`;
+const SED_ATOM = `(?:${SED_ADDR}\\s*)?(?:[pd=]|q\\d*)`;
+const SED_SCRIPT_RE = new RegExp(`^\\s*${SED_ATOM}(?:\\s*;\\s*${SED_ATOM})*\\s*;?\\s*$`);
+
+/**
+ * Splits a segment into whitespace-separated tokens with surrounding single
+ * or double quotes removed (quoted spans may contain whitespace). Returns
+ * null on unbalanced quotes.
+ */
+function tokenizeQuoted(segment: string): string[] | null {
+  const tokens: string[] = [];
+  let cur = "";
+  let started = false;
+  let i = 0;
+  while (i < segment.length) {
+    const ch = segment[i];
+    if (ch === "'" || ch === '"') {
+      const close = segment.indexOf(ch, i + 1);
+      if (close === -1) return null;
+      cur += segment.slice(i + 1, close);
+      started = true;
+      i = close + 1;
+    } else if (/\s/.test(ch)) {
+      if (started) {
+        tokens.push(cur);
+        cur = "";
+        started = false;
+      }
+      i++;
+    } else {
+      cur += ch;
+      started = true;
+      i++;
+    }
+  }
+  if (started) tokens.push(cur);
+  return tokens;
+}
+
+/**
+ * Returns true when a `sed` segment is provably read-only: every flag is in
+ * the safe set, every script (positional or via -e/--expression) matches the
+ * restricted print/quit grammar, and no other option appears anywhere --
+ * including after filenames, since GNU sed permutes arguments, so a literal
+ * `-i` at the end would still edit in place.
+ */
+export function isReadOnlySedSegment(segment: string): boolean {
+  // Fail closed on backslashes: escaping could smuggle quotes or newlines
+  // past the simple tokenizer above.
+  if (segment.includes("\\")) return false;
+  const tokens = tokenizeQuoted(segment);
+  if (!tokens || tokens[0] !== "sed") return false;
+
+  let script: string | null = null;
+  let sawDashDash = false;
+
+  for (let i = 1; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (!sawDashDash && tok === "--") {
+      sawDashDash = true;
+      continue;
+    }
+    if (!sawDashDash && tok.startsWith("-") && tok !== "-") {
+      if (tok === "-e" || tok === "--expression") {
+        const expr = tokens[++i];
+        if (expr === undefined || !SED_SCRIPT_RE.test(expr)) return false;
+        script = expr;
+        continue;
+      }
+      if (tok.startsWith("--expression=")) {
+        const expr = tok.slice("--expression=".length);
+        if (!SED_SCRIPT_RE.test(expr)) return false;
+        script = expr;
+        continue;
+      }
+      if (SED_SAFE_SHORT_FLAG_RE.test(tok) || SED_SAFE_LONG_FLAGS.has(tok)) continue;
+      // Anything else (-i, -f, unknown flags) requires confirmation.
+      return false;
+    }
+    // First positional token is the script; the rest are input files.
+    if (script === null) {
+      if (!SED_SCRIPT_RE.test(tok)) return false;
+      script = tok;
+    }
+  }
+
+  return script !== null;
+}
+
 // --- Safety check ---
 
 /**
@@ -418,6 +523,7 @@ export function isSafeCommand(
     const flags = PREFIX_DANGEROUS_FLAGS[matchedPrefix];
     if (flags?.some((re) => re.test(clean))) return false;
     if (isPlainGitRefCreation(clean, matchedPrefix)) return false;
+    if (matchedPrefix === "sed" && !isReadOnlySedSegment(clean)) return false;
 
     // A validated substitution is still opaque: its runtime output can become
     // an option. For commands with write/exec-capable options, force a prompt

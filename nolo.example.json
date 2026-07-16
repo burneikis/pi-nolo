@@ -48,6 +48,7 @@
     "cargo --version",
     "rustc --version",
     "go version",
+    "sed",
     "true",
     "false",
     ":",

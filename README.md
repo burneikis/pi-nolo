@@ -100,9 +100,13 @@ md5sum, sha256sum, git status, git log, git diff, git show,
 git blame, git ls-files, git branch, git remote, git tag,
 git rev-parse, npm list, npm outdated, npm view, node --version,
 python --version, cargo --version, rustc --version, go version,
-true, false, :, sort, uniq, cut, tr, jq, column, paste, comm,
-diff, less, more
+sed, true, false, :, sort, uniq, cut, tr, jq, column, paste,
+comm, diff, less, more
 ```
+
+### sed
+
+`sed` is allowlisted but gated behind a strict read-only script grammar rather than a flag blacklist, because its script language can write files (`w`, `W`, `s///w`) and run commands (`e`, `s///e`) even without `-i`. A sed segment auto-approves only when every script (positional or via `-e`/`--expression`) consists of numeric or `$` (last-line) addresses with the `p`, `d`, `=`, or `q` commands, and every flag is from the read-only set (`-n`, `-u`, `-z`, `-s`, `-E`, `-r` and their long forms). So `sed -n '2400,2480p' file` and `sed 10q file` auto-approve, while `sed -i`, `-f`, `s///`, `w`/`e` commands, regex addresses, backslash escapes, and options appearing after filenames (GNU sed permutes arguments) all prompt.
 
 ### Dangerous pattern guard
 

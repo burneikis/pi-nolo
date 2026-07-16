@@ -149,8 +149,8 @@ describe("isSafeCommand", () => {
     assert.equal(safe("jq .name package.json"), true);
   });
 
-  it("blocks sed (removed: its program language can execute and write)", () => {
-    assert.equal(safe("sed -n 5p file.txt"), false);
+  it("allows sed with a read-only script (validated by isReadOnlySedSegment)", () => {
+    assert.equal(safe("sed -n 5p file.txt"), true);
   });
 
   it("allows diff", () => {
@@ -963,5 +963,140 @@ describe("isSafeCommand -- prefix dangerous flags", () => {
 
   it("blocks git tag -f", () => {
     assert.equal(safe("git tag -f v1.0"), false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sed read-only validation
+// ---------------------------------------------------------------------------
+describe("isSafeCommand -- sed", () => {
+  // safe read-only forms
+  it("allows sed -n range print", () => {
+    assert.equal(safe("sed -n '2400,2480p' webapp/src/app/foo.ts"), true);
+  });
+
+  it("allows sed -n range print with double quotes", () => {
+    assert.equal(safe('sed -n "10,20p" file.txt'), true);
+  });
+
+  it("allows sed -n unquoted range print", () => {
+    assert.equal(safe("sed -n 1,50p file.txt"), true);
+  });
+
+  it("allows sed single line print", () => {
+    assert.equal(safe("sed -n '42p' file.txt"), true);
+  });
+
+  it("allows sed head-equivalent quit", () => {
+    assert.equal(safe("sed 10q file.txt"), true);
+  });
+
+  it("allows sed line-count form", () => {
+    assert.equal(safe("sed -n '$=' file.txt"), true);
+  });
+
+  it("allows sed last-line print", () => {
+    assert.equal(safe("sed -n '$p' file.txt"), true);
+  });
+
+  it("allows sed step addresses", () => {
+    assert.equal(safe("sed -n '1~2p' file.txt"), true);
+  });
+
+  it("allows sed multiple atoms", () => {
+    assert.equal(safe("sed -n '5p;10p' file.txt"), true);
+  });
+
+  it("allows sed -e expression form", () => {
+    assert.equal(safe("sed -n -e '1,10p' file.txt"), true);
+  });
+
+  it("allows sed --expression= form", () => {
+    assert.equal(safe("sed -n --expression='1,10p' file.txt"), true);
+  });
+
+  it("allows sed with combined safe flags", () => {
+    assert.equal(safe("sed -nz '1,10p' file.txt"), true);
+  });
+
+  it("allows sed after -- terminator", () => {
+    assert.equal(safe("sed -n -- '1,10p' file.txt"), true);
+  });
+
+  it("allows sed reading stdin in a pipe", () => {
+    assert.equal(safe("cat file.txt | sed -n '1,10p'"), true);
+  });
+
+  it("allows sed delete-lines filter", () => {
+    assert.equal(safe("sed '1d' file.txt"), true);
+  });
+
+  // unsafe forms
+  it("blocks sed -i in-place edit", () => {
+    assert.equal(safe("sed -i 's/a/b/' file.txt"), false);
+  });
+
+  it("blocks sed -i even with read-only script", () => {
+    assert.equal(safe("sed -i -n '1,10p' file.txt"), false);
+  });
+
+  it("blocks sed --in-place", () => {
+    assert.equal(safe("sed --in-place 's/a/b/' file.txt"), false);
+  });
+
+  it("blocks trailing -i after files (GNU permuted options)", () => {
+    assert.equal(safe("sed -n '1,10p' file.txt -i"), false);
+  });
+
+  it("blocks sed substitution scripts", () => {
+    assert.equal(safe("sed 's/foo/bar/' file.txt"), false);
+  });
+
+  it("blocks sed w (write file) command", () => {
+    assert.equal(safe("sed -n '1,10w /tmp/out' file.txt"), false);
+  });
+
+  it("blocks sed s///w write flag", () => {
+    assert.equal(safe("sed -n 's/a/b/w out' file.txt"), false);
+  });
+
+  it("blocks sed e (execute) command", () => {
+    assert.equal(safe("sed '1e id' file.txt"), false);
+  });
+
+  it("blocks sed s///e execute flag", () => {
+    assert.equal(safe("sed 's/^/id/e' file.txt"), false);
+  });
+
+  it("blocks sed -f script file", () => {
+    assert.equal(safe("sed -f script.sed file.txt"), false);
+  });
+
+  it("blocks sed regex addresses", () => {
+    assert.equal(safe("sed -n '/foo/p' file.txt"), false);
+  });
+
+  it("blocks sed with backslash escapes", () => {
+    assert.equal(safe("sed -n \\'1,10p\\' file.txt"), false);
+  });
+
+  it("blocks sed with no script", () => {
+    assert.equal(safe("sed -n file.txt"), false);
+  });
+
+  it("blocks bare sed", () => {
+    assert.equal(safe("sed"), false);
+  });
+
+  it("blocks sed -e with dangerous expression", () => {
+    assert.equal(safe("sed -e '1,10p' -e 'w out' file.txt"), false);
+  });
+
+  it("blocks sed with command substitution arguments", () => {
+    assert.equal(safe("sed -n '1,10p' $(echo -i) file.txt"), false);
+  });
+
+  it("blocks sed script via unexpanded variable", () => {
+    assert.equal(safe("sed -n \"$SCRIPT\" file.txt"), false);
   });
 });

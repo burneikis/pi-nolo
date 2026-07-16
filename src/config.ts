@@ -54,6 +54,10 @@ export const DEFAULT_SAFE_PREFIXES = [
   "cargo --version",
   "rustc --version",
   "go version",
+  // sed is allowlisted but additionally validated by isReadOnlySedSegment in
+  // safety.ts: only strictly read-only scripts (line ranges with p/d/=/q) are
+  // auto-approved; -i, -f, s///, w/W/e/r commands, and regex addresses prompt.
+  "sed",
   // shell built-ins used as no-ops or fallbacks
   "true",
   "false",
@@ -135,7 +139,7 @@ export const PREFIX_DANGEROUS_FLAGS: Record<string, RegExp[]> = {
  * that its entire argument surface is safe.
  */
 export const DYNAMIC_ARGUMENT_UNSAFE_PREFIXES = new Set([
-  "date", "file", "find", "fd", "rg", "sort", "tree", "diff", "less",
+  "date", "file", "find", "fd", "rg", "sort", "tree", "diff", "less", "sed",
   "git log", "git diff", "git show", "git branch", "git remote", "git tag",
 ]);
 
