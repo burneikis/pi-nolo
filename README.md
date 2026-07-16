@@ -108,7 +108,7 @@ Standalone assignments with literal values are treated as safe segments, and `$N
 
 ### cd tracking
 
-`cd <literal-dir>` targets are tracked so that a following relative command word (`./x`, `../x`) can be resolved to an absolute path before prefix matching: `cd /skills/phab/scripts && ./tool.sh` is judged exactly like `/skills/phab/scripts/tool.sh`. Tracking only survives `&&` boundaries, where the shell guarantees the cd succeeded in the main shell; any `;`, `|`, `||`, or bare newline invalidates it (a failed or subshelled cd would leave `./x` pointing at a different, untrusted file). cd targets containing variables, substitutions, quotes, or `~` are never trusted.
+`cd <literal-dir>` targets are tracked so that a following relative command word (`./x`, `../x`) can be resolved to an absolute path before prefix matching: `cd /skills/phab/scripts && ./tool.sh` is judged exactly like `/skills/phab/scripts/tool.sh`. The tracked directory always survives `&&` boundaries, where the shell guarantees the cd succeeded in the main shell. It also survives `;` and bare-newline boundaries when the target directory is verified to exist (and be traversable) at check time -- a verified cd cannot fail, so the later segments really do run there. `|` and `||` always invalidate the tracked directory: a subshelled or conditionally-skipped cd leaves `./x` pointing at a different, untrusted file regardless of the filesystem. cd targets containing variables, substitutions, quotes, or `~` are never trusted.
 
 Bare newlines are treated as command separators (like `;`) and each line is checked independently; backslash-newline continuations are joined.
 

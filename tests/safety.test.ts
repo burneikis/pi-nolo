@@ -531,6 +531,53 @@ describe("isSafeCommand -- cd tracking", () => {
 });
 
 // ---------------------------------------------------------------------------
+// cd tracking with fs-verified directories (isExecutableDir)
+// ---------------------------------------------------------------------------
+describe("isSafeCommand -- verified cd survives ;", () => {
+  const scriptPrefixes = [...DEFAULT_SAFE_PREFIXES, "/skills/phab/scripts/phab-get.sh"];
+  const verifiedDirs = new Set(["/skills/phab", "/skills/phab/scripts"]);
+  const opts = { isExecutableDir: (p: string) => verifiedDirs.has(p) };
+  function safeWith(cmd: string, o = opts) {
+    return isSafeCommand(cmd, scriptPrefixes, defaultRegexes, defaultSegmentRegexes, o);
+  }
+
+  it("keeps verified cwd across ;", () => {
+    assert.equal(safeWith("cd /skills/phab/scripts && echo x; ./phab-get.sh T123"), true);
+  });
+
+  it("keeps verified cwd across multiple ; and newlines", () => {
+    assert.equal(
+      safeWith("cd /skills/phab/scripts && W=x; echo $W\n./phab-get.sh T123"),
+      true,
+    );
+  });
+
+  it("keeps verified cwd through a relative cd chain", () => {
+    assert.equal(safeWith("cd /skills/phab && cd scripts; ./phab-get.sh T123"), true);
+  });
+
+  it("drops unverified cwd at ;", () => {
+    assert.equal(safeWith("cd /skills/phab/other && echo x; ./phab-get.sh T123"), false);
+  });
+
+  it("drops cwd at ; when no checker is provided", () => {
+    assert.equal(safeWith("cd /skills/phab/scripts && echo x; ./phab-get.sh T123", {}), false);
+  });
+
+  it("still drops verified cwd at |", () => {
+    assert.equal(safeWith("cd /skills/phab/scripts && ls | ./phab-get.sh T123"), false);
+  });
+
+  it("still drops verified cwd at ||", () => {
+    assert.equal(safeWith("cd /skills/phab/scripts && ls || ./phab-get.sh T123"), false);
+  });
+
+  it("still ignores cd in a pipeline subshell even when verified", () => {
+    assert.equal(safeWith("echo x | cd /skills/phab/scripts && ./phab-get.sh T123"), false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Command substitutions
 // ---------------------------------------------------------------------------
 describe("extractCommandSubstitutions", () => {

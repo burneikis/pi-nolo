@@ -11,8 +11,10 @@
  * Standalone literal assignments (D=/path) are safe segments and $D/${D} references are expanded
  * before prefix matching. Command substitutions $(...) are validated recursively: safe inner
  * commands are replaced with an inert placeholder; unsafe ones fall through to confirmation.
- * cd <literal-dir> is tracked across && boundaries so relative ./x command words resolve to
- * absolute paths before prefix matching. Bare newlines separate commands like `;`.
+ * cd <literal-dir> is tracked so relative ./x command words resolve to absolute paths before
+ * prefix matching: always across &&, and across ;/newlines when the directory is fs-verified
+ * at check time (a verified cd cannot fail). | and || always invalidate. Bare newlines
+ * separate commands like `;`.
  *
  * YOLO modes (toggle with /yolo or the configured shortcut, default ctrl+y):
  *   off        — default: confirm all writes/edits/bash (safe bash commands auto-approved)
@@ -25,8 +27,22 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { resolve, sep } from "node:path";
+import { accessSync, constants, statSync } from "node:fs";
 import { loadConfig, DEFAULT_SAFE_PREFIXES, DEFAULT_DANGEROUS_PATTERNS, DEFAULT_SEGMENT_DANGEROUS_PATTERNS } from "./src/config.js";
 import { isSafeCommand } from "./src/safety.js";
+
+// True when the path is an existing, traversable directory. Lets the safety
+// check keep a tracked `cd` directory across `;` boundaries: a cd to a
+// verified directory cannot fail, so later segments really run there.
+const isExecutableDir = (path: string): boolean => {
+  try {
+    if (!statSync(path).isDirectory()) return false;
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
 import {
   createYoloState,
   restoreYoloMode,
@@ -130,7 +146,13 @@ export default function (pi: ExtensionAPI) {
       if (yolo.mode === "full") return undefined;
 
       const command = event.input.command as string;
-      if (isSafeCommand(command, safePrefixes, dangerousRegexes, segmentDangerousRegexes)) return undefined;
+      if (
+        isSafeCommand(command, safePrefixes, dangerousRegexes, segmentDangerousRegexes, {
+          isExecutableDir,
+        })
+      ) {
+        return undefined;
+      }
 
       const firstLine = command.split("\n")[0];
       const preview = command.includes("\n") ? `${firstLine}...` : firstLine;

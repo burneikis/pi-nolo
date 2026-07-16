@@ -252,16 +252,28 @@ export function expandVars(segment: string, vars: Map<string, string>): string {
  * unbalanced substitution fails the check. Backticks are always unsafe.
  *
  * `cd <literal-dir>` is tracked so that a later `./x` or `../x` command word
- * can be resolved to an absolute path before prefix matching -- but only
- * across `&&` boundaries, where the shell guarantees the cd succeeded and ran
- * in the main shell. Any `;`, `|`, or `||` invalidates the tracked directory
- * (a failed or subshelled cd would leave relative paths pointing elsewhere).
+ * can be resolved to an absolute path before prefix matching. The tracked
+ * directory always survives `&&` boundaries (the shell guarantees the cd
+ * succeeded in the main shell). It additionally survives `;` when the target
+ * was verified via opts.isExecutableDir at check time -- a verified cd cannot
+ * fail, so post-`;` segments really do run there. `|` and `||` always
+ * invalidate (subshelled or conditionally-skipped cds are independent of
+ * whether the directory exists).
  */
+export interface SafeCommandOptions {
+  /**
+   * Returns true when the path is an existing, traversable directory.
+   * Enables keeping the tracked cwd across `;` boundaries.
+   */
+  isExecutableDir?: (path: string) => boolean;
+}
+
 export function isSafeCommand(
   command: string,
   safePrefixes: string[],
   dangerousRegexes: RegExp[],
   segmentDangerousRegexes: RegExp[],
+  opts: SafeCommandOptions = {},
   depth = 0,
 ): boolean {
   let trimmed = command.trim();
@@ -275,7 +287,7 @@ export function isSafeCommand(
   if (spans.length > 0 && depth < MAX_SUBST_DEPTH) {
     for (const span of spans) {
       if (
-        !isSafeCommand(span.inner, safePrefixes, dangerousRegexes, segmentDangerousRegexes, depth + 1)
+        !isSafeCommand(span.inner, safePrefixes, dangerousRegexes, segmentDangerousRegexes, opts, depth + 1)
       ) {
         return false;
       }
@@ -302,12 +314,17 @@ export function isSafeCommand(
 
   const vars = new Map<string, string>();
   let cwd: string | null = null;
+  let cwdVerified = false;
 
   for (const { text, prevOp } of segments) {
-    // A tracked cwd is only trustworthy across && boundaries: after `;` the
-    // cd may have failed, and around `|` / `||` it may have run in a subshell
-    // or been skipped entirely.
-    if (prevOp !== null && prevOp !== "&&") cwd = null;
+    // A tracked cwd always survives && boundaries. It survives `;` only when
+    // the cd target was fs-verified (a verified cd cannot fail, so post-`;`
+    // segments really run there). `|` / `||` always invalidate: the cd may
+    // have run in a subshell or been skipped regardless of the filesystem.
+    if (prevOp !== null && prevOp !== "&&" && !(prevOp === ";" && cwdVerified)) {
+      cwd = null;
+      cwdVerified = false;
+    }
 
     // Expand variables assigned earlier in this command before any checks.
     const expanded = expandVars(text, vars);
@@ -328,6 +345,7 @@ export function isSafeCommand(
     // target must not be trusted; cwd was already invalidated above.
     if (clean === "cd" || clean.startsWith("cd ")) {
       cwd = prevOp === "|" || prevOp === "||" ? null : trackCd(clean, cwd);
+      cwdVerified = cwd !== null && opts.isExecutableDir?.(cwd) === true;
     } else if (cwd && (clean.startsWith("./") || clean.startsWith("../"))) {
       // Resolve a relative command word against the tracked directory so it
       // can match absolute-path safe prefixes.
