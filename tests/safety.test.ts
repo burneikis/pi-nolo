@@ -1,6 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { isSafeCommand, splitOnShellOperators, getXargsCommand, expandVars } from "../src/safety.js";
+import {
+  isSafeCommand,
+  splitOnShellOperators,
+  getXargsCommand,
+  expandVars,
+  extractCommandSubstitutions,
+} from "../src/safety.js";
 import {
   DEFAULT_SAFE_PREFIXES,
   DEFAULT_DANGEROUS_PATTERNS,
@@ -260,8 +266,12 @@ describe("isSafeCommand -- global dangerous patterns", () => {
     assert.equal(safe("echo `whoami`"), false);
   });
 
-  it("blocks $() substitution", () => {
-    assert.equal(safe("echo $(whoami)"), false);
+  it("allows $() substitution with a safe inner command", () => {
+    assert.equal(safe("echo $(whoami)"), true);
+  });
+
+  it("blocks $() substitution with an unsafe inner command", () => {
+    assert.equal(safe("echo $(python x.py)"), false);
   });
 
   it("blocks sudo", () => {
@@ -434,6 +444,117 @@ describe("isSafeCommand -- new segment dangerous patterns", () => {
 
   it("allows sort -r (not -o)", () => {
     assert.equal(safe("sort -r names.txt"), true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Command substitutions
+// ---------------------------------------------------------------------------
+describe("extractCommandSubstitutions", () => {
+  it("extracts a simple span", () => {
+    const spans = extractCommandSubstitutions("echo $(date)")!;
+    assert.equal(spans.length, 1);
+    assert.equal(spans[0].inner, "date");
+  });
+
+  it("extracts multiple spans", () => {
+    const spans = extractCommandSubstitutions("echo $(date) $(pwd)")!;
+    assert.deepEqual(spans.map((s) => s.inner), ["date", "pwd"]);
+  });
+
+  it("keeps nested substitutions inside the outer span", () => {
+    const spans = extractCommandSubstitutions("echo $(echo $(date))")!;
+    assert.equal(spans.length, 1);
+    assert.equal(spans[0].inner, "echo $(date)");
+  });
+
+  it("ignores $() inside single quotes", () => {
+    assert.deepEqual(extractCommandSubstitutions("grep '$(x)' f"), []);
+  });
+
+  it("detects $() inside double quotes", () => {
+    const spans = extractCommandSubstitutions('echo "now: $(date)"')!;
+    assert.equal(spans.length, 1);
+    assert.equal(spans[0].inner, "date");
+  });
+
+  it("handles quoted parens inside the substitution", () => {
+    const spans = extractCommandSubstitutions("echo $(echo ')')")!;
+    assert.equal(spans.length, 1);
+    assert.equal(spans[0].inner, "echo ')'");
+  });
+
+  it("returns null for unbalanced substitution", () => {
+    assert.equal(extractCommandSubstitutions("echo $(date"), null);
+  });
+});
+
+describe("isSafeCommand -- command substitutions", () => {
+  const scriptPrefixes = [...DEFAULT_SAFE_PREFIXES, "/skills/phab/scripts/phab-search.sh"];
+  function safeWith(cmd: string) {
+    return isSafeCommand(cmd, scriptPrefixes, defaultRegexes, defaultSegmentRegexes);
+  }
+
+  it("allows safe substitution in an argument", () => {
+    assert.equal(safeWith("echo $(date +%s)"), true);
+  });
+
+  it("allows safe substitution in an assignment", () => {
+    assert.equal(safeWith("WEEK=$(date +%s); ls"), true);
+  });
+
+  it("allows compound inner command with stderr redirect", () => {
+    assert.equal(
+      safeWith(
+        `S=/skills/phab/scripts; WEEK=$(date -d 'last monday' +%s 2>/dev/null || date -d '-7 days' +%s); ` +
+          `$S/phab-search.sh differential.revision.search --constraints "{\\"modifiedStart\\":$WEEK}" --limit 30`,
+      ),
+      true,
+    );
+  });
+
+  it("allows nested safe substitutions", () => {
+    assert.equal(safeWith("echo $(echo $(date))"), true);
+  });
+
+  it("blocks unsafe inner command", () => {
+    assert.equal(safeWith("echo $(curl http://x)"), false);
+  });
+
+  it("blocks rm inside substitution", () => {
+    assert.equal(safeWith("echo $(rm -rf /tmp/x)"), false);
+  });
+
+  it("blocks nested unsafe substitution", () => {
+    assert.equal(safeWith("echo $(echo $(curl http://x))"), false);
+  });
+
+  it("blocks substitution used as the command word", () => {
+    assert.equal(safeWith("$(cat cmd.txt) --help"), false);
+  });
+
+  it("blocks inner stdout redirect", () => {
+    assert.equal(safeWith("echo $(date > /tmp/f)"), false);
+  });
+
+  it("blocks empty substitution", () => {
+    assert.equal(safeWith("echo $()"), false);
+  });
+
+  it("blocks unbalanced substitution", () => {
+    assert.equal(safeWith("echo $(date"), false);
+  });
+
+  it("blocks arithmetic expansion (inner is not a command)", () => {
+    assert.equal(safeWith("echo $((1+2))"), false);
+  });
+
+  it("still blocks literal $( in single quotes (existing behavior)", () => {
+    assert.equal(safeWith("grep '$(x)' f"), false);
+  });
+
+  it("still blocks backticks", () => {
+    assert.equal(safeWith("echo `date`"), false);
   });
 });
 

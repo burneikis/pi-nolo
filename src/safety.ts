@@ -86,6 +86,68 @@ export function splitOnShellOperators(command: string): string[] {
   return segments;
 }
 
+// --- Command substitutions ---
+
+interface SubstSpan {
+  start: number; // index of "$("
+  end: number;   // index just past the matching ")"
+  inner: string; // command between the parens
+}
+
+// Inert stand-in for a validated substitution. Letters/underscores only so it
+// can never match a safe prefix, trip a dangerous pattern, or parse as a shell
+// operator; if a substitution is used as the command word itself, the
+// placeholder fails prefix matching and the command still requires confirmation.
+const SUBST_PLACEHOLDER = "__nolo_subst__";
+
+// Guard against pathological nesting when recursively validating inner commands.
+const MAX_SUBST_DEPTH = 5;
+
+/**
+ * Extracts top-level `$(...)` spans, ignoring ones inside single quotes
+ * (where the shell treats them literally) and tracking quotes and paren depth
+ * inside each substitution. Returns null when a substitution is unbalanced.
+ */
+export function extractCommandSubstitutions(command: string): SubstSpan[] | null {
+  const spans: SubstSpan[] = [];
+  let inSingle = false;
+  let inDouble = false;
+  let i = 0;
+
+  while (i < command.length) {
+    const ch = command[i];
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      i++;
+    } else if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      i++;
+    } else if (!inSingle && command.startsWith("$(", i)) {
+      let depth = 1;
+      let j = i + 2;
+      let s = false;
+      let d = false;
+      while (j < command.length && depth > 0) {
+        const c = command[j];
+        if (c === "'" && !d) s = !s;
+        else if (c === '"' && !s) d = !d;
+        else if (!s) {
+          if (c === "(") depth++;
+          else if (c === ")") depth--;
+        }
+        j++;
+      }
+      if (depth !== 0) return null;
+      spans.push({ start: i, end: j, inner: command.slice(i + 2, j - 1) });
+      i = j;
+    } else {
+      i++;
+    }
+  }
+
+  return spans;
+}
+
 // --- Simple variable assignments ---
 
 // A standalone segment like `D=/path/to/dir` with a literal value: no spaces,
@@ -125,14 +187,41 @@ export function expandVars(segment: string, vars: Map<string, string>): string {
  * treated as safe, and `$D` / `${D}` in later segments is expanded to the
  * assigned value before prefix matching, so `D=/x; $D/tool.sh` is judged
  * exactly like `/x/tool.sh`.
+ *
+ * Command substitutions `$(...)` are validated recursively: when every inner
+ * command is itself safe, the spans are replaced with an inert placeholder and
+ * the outer command is checked as usual (substitution output is only ever
+ * word-split by the shell, never re-parsed for operators, so a safe inner
+ * command's output can only become arguments). Any unsafe, empty, or
+ * unbalanced substitution fails the check. Backticks are always unsafe.
  */
 export function isSafeCommand(
   command: string,
   safePrefixes: string[],
   dangerousRegexes: RegExp[],
   segmentDangerousRegexes: RegExp[],
+  depth = 0,
 ): boolean {
-  const trimmed = command.trim();
+  let trimmed = command.trim();
+
+  // Command substitutions: recursively validate inner commands; if all are
+  // safe, replace the spans with a placeholder so downstream checks treat them
+  // as opaque arguments. Otherwise leave the string untouched so the global
+  // `\$\(` dangerous pattern rejects it below.
+  const spans = extractCommandSubstitutions(trimmed);
+  if (spans === null) return false;
+  if (spans.length > 0 && depth < MAX_SUBST_DEPTH) {
+    for (const span of spans) {
+      if (
+        !isSafeCommand(span.inner, safePrefixes, dangerousRegexes, segmentDangerousRegexes, depth + 1)
+      ) {
+        return false;
+      }
+    }
+    for (let i = spans.length - 1; i >= 0; i--) {
+      trimmed = trimmed.slice(0, spans[i].start) + SUBST_PLACEHOLDER + trimmed.slice(spans[i].end);
+    }
+  }
 
   // Global check: constructs dangerous regardless of context.
   for (const re of dangerousRegexes) {

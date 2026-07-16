@@ -8,6 +8,9 @@
  *   global  -- checked on the full command string (backticks, $(), rm, sudo, eval, source)
  *   segment -- checked per segment (sh/bash as commands, find -exec/-delete, system() calls)
  * Stderr redirects such as 2>/dev/null are allowed. Both pattern sets are configurable.
+ * Standalone literal assignments (D=/path) are safe segments and $D/${D} references are expanded
+ * before prefix matching. Command substitutions $(...) are validated recursively: safe inner
+ * commands are replaced with an inert placeholder; unsafe ones fall through to confirmation.
  *
  * YOLO modes (toggle with /yolo or the configured shortcut, default ctrl+y):
  *   off        — default: confirm all writes/edits/bash (safe bash commands auto-approved)
