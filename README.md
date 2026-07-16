@@ -77,18 +77,22 @@ In `writes` mode, write/edit calls are normally auto-approved anywhere on disk. 
 
 Safe commands are auto-approved without a confirmation dialog. A command is considered safe when:
 
-1. It starts with a recognized safe prefix (e.g., `ls`, `grep`, `git status`)
-2. It does **not** contain any dangerous patterns (pipes, chaining, redirects, etc.)
+1. Every shell segment starts with a recognized safe prefix (e.g., `ls`, `grep`, `git status`)
+2. It does **not** contain dangerous constructs, flags, redirects, or mutation forms
+3. Any command substitution is recursively safe and is not supplying an opaque argument to a command whose flags can write or execute
 
 ### Default safe prefixes
 
 ```
-ls, cat, head, tail, wc, find, grep, rg, fd, tree,
+cd, ls, cat, head, tail, wc, find, grep, rg, fd, tree,
 file, stat, du, df, which, whoami, pwd, echo, date, uname,
-env, printenv, git status, git log, git diff, git show,
-git branch, git remote, git tag, git rev-parse,
-npm list, npm outdated, npm view, node --version,
-python --version, cargo --version, rustc --version, go version
+printenv, basename, dirname, realpath, readlink, id, hostname,
+md5sum, sha256sum, git status, git log, git diff, git show,
+git blame, git ls-files, git branch, git remote, git tag,
+git rev-parse, npm list, npm outdated, npm view, node --version,
+python --version, cargo --version, rustc --version, go version,
+true, false, :, sort, uniq, cut, tr, jq, column, paste, comm,
+diff, less, more
 ```
 
 ### Dangerous pattern guard
@@ -114,7 +118,9 @@ Bare newlines are treated as command separators (like `;`) and each line is chec
 
 ### Command substitutions
 
-`$(...)` substitutions are validated recursively: if the inner command is itself safe (e.g. `date`, `whoami`, or an allowlisted script), the substitution is replaced with an inert placeholder and the outer command is checked as usual. So `WEEK=$(date +%s); ls` auto-approves, while `echo $(curl http://x)` confirms. This is sound because the shell only word-splits substitution output - it never re-parses it for operators - so a safe inner command's output can only become arguments; a substitution used as the command word itself always requires confirmation (the placeholder never matches a safe prefix). Backticks, unbalanced or empty substitutions, and arithmetic expansion `$((...))` always require confirmation.
+`$(...)` substitutions are **not executed by the checker**. Their inner command text is validated recursively, then replaced with an inert placeholder solely for static matching. So `WEEK=$(date +%s); echo $WEEK` auto-approves, while `echo $(curl http://x)` confirms. A substitution used as the command word itself always confirms.
+
+Although shell operators in substitution output are not re-parsed, the output can become command options. Built-in prefixes whose options can write or execute (`find`, `fd`, `sort`, `rg`, `date`, selected Git commands, etc.) therefore reject opaque substitution-derived arguments: `sort $(echo -o) ...` confirms. Custom safe prefixes are treated as an explicit assertion that their complete argument surface is safe; wrappers should enforce their own read-only operation guard, as the Phab search wrapper does. Backticks, unsafe/unbalanced/empty substitutions, and arithmetic expansion `$((...))` always confirm.
 
 ## Configuration
 

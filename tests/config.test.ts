@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync, rmSync, existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import {
-  loadConfig,
+  loadConfig as loadConfigFromDisk,
   DEFAULT_SAFE_PREFIXES,
   DEFAULT_DANGEROUS_PATTERNS,
   DEFAULT_SEGMENT_DANGEROUS_PATTERNS,
@@ -17,6 +17,8 @@ import {
 // in-process, so we write directly to .pi/nolo.json relative to cwd instead.
 
 const PROJECT_CFG = join(".pi", "nolo.json");
+const EMPTY_HOME = join(tmpdir(), "pi-nolo-test-empty-home");
+const loadConfig = () => loadConfigFromDisk({ homeDir: EMPTY_HOME });
 
 function cleanProjectCfg() {
   if (existsSync(PROJECT_CFG)) rmSync(PROJECT_CFG, { force: true });

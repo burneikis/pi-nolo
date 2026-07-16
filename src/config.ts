@@ -63,7 +63,6 @@ export const DEFAULT_SAFE_PREFIXES = [
   "uniq",
   "cut",
   "tr",
-  "sed",
   "jq",
   "column",
   "paste",
@@ -92,21 +91,64 @@ export const DEFAULT_SEGMENT_DANGEROUS_PATTERNS = [
   "^sh\\b",                            // sh used as a command
   "^bash\\b",                          // bash used as a command
   "^exec\\b",                          // exec shell builtin
-  "[ \\t]-(?:exec|execdir|ok|delete)\\b", // find flags that run or delete
+  // find actions that execute, delete, or write directly to a file
+  "[ \\t]-(?:exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)\\b",
   "[ \\t]-(?:x|X)\\b",                   // fd -x/-X (exec)
   "[ \\t]--(?:exec|exec-batch)\\b",       // fd --exec/--exec-batch
-  "\\bsystem\\s*\\(",                  // awk/sed system() call
+  "\\bsystem\\s*\\(",                  // awk system() call
 ];
 
 // Per-prefix dangerous flags. These are checked only when a segment matches
 // the given safe prefix, avoiding false positives on other commands.
 // Patterns are tested against the segment string.
 export const PREFIX_DANGEROUS_FLAGS: Record<string, RegExp[]> = {
-  "git branch": [/\s-[dDmMcC]\b/],
-  "git remote": [/\s(?:add|remove|rename|set-url)\b/],
-  "git tag":    [/\s-[df]\b/],
-  "sort":        [/\s-o\b/, /\s--output\b/],
+  "date":        [/\s-s(?:\S*|\s)/, /\s--set(?:=|\s)/],
+  "file":        [/\s-C(?:\S*|\s)/, /\s--compile(?:\s|$)/],
+  "find":        [/\s-(?:exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)\b/],
+  "fd":          [/\s-(?:x|X)(?:\s|$)/, /\s--(?:exec|exec-batch)(?:=|\s)/],
+  "rg":          [/\s--pre(?:=|\s)/],
+  "sort":        [/\s-o(?:\s|\S)/, /\s--output(?:=|\s)/],
+  "tree":        [/\s-o(?:\s|\S)/, /\s--output(?:=|\s)/],
+  "diff":        [/\s--output(?:=|\s)/],
+  "less":        [/\s-[oO](?:\s|\S)/, /\s--log-file(?:=|\s)/],
+  "git log":     [/\s--output(?:=|\s)/, /\s--ext-diff(?:\s|$)/, /\s--textconv(?:\s|$)/],
+  "git diff":    [/\s--output(?:=|\s)/, /\s--ext-diff(?:\s|$)/, /\s--textconv(?:\s|$)/],
+  "git show":    [/\s--output(?:=|\s)/, /\s--ext-diff(?:\s|$)/, /\s--textconv(?:\s|$)/],
+  "git branch":  [
+    /\s-[dDmMcCft]\b/,
+    /\s--(?:delete|move|copy|force|track|no-track|recurse-submodules|edit-description|set-upstream-to|unset-upstream|create-reflog|orphan)\b/,
+  ],
+  "git remote":  [/\s(?:add|remove|rename|set-url|set-head|prune|update)\b/],
+  "git tag":     [
+    /\s-[adfsumF]\b/,
+    /\s--(?:annotate|delete|force|sign|local-user|message|file|cleanup|create-reflog)\b/,
+  ],
 };
+
+/**
+ * Built-in prefixes whose runtime arguments can turn an otherwise read command
+ * into a write or process execution. Any command-substitution placeholder in
+ * one of these segments forces confirmation, because its output is unknowable
+ * statically and could become a dangerous option (e.g. `sort $(echo -o)`).
+ *
+ * Custom safe prefixes are not included: adding one is an explicit assertion
+ * that its entire argument surface is safe.
+ */
+export const DYNAMIC_ARGUMENT_UNSAFE_PREFIXES = new Set([
+  "date", "file", "find", "fd", "rg", "sort", "tree", "diff", "less",
+  "git log", "git diff", "git show", "git branch", "git remote", "git tag",
+]);
+
+/**
+ * Commands xargs may invoke. xargs input becomes runtime arguments, so only
+ * tools whose argument surface cannot write files or execute subprocesses are
+ * permitted. In particular, find/fd/sort/rg/git/file are intentionally absent.
+ */
+export const XARGS_SAFE_PREFIXES = new Set([
+  "echo", "cat", "head", "tail", "wc", "grep", "stat", "du", "df",
+  "basename", "dirname", "realpath", "readlink", "md5sum", "sha256sum",
+  "uniq", "cut", "tr", "column", "paste", "comm",
+]);
 
 // Default YOLO-cycle shortcut. Configurable via `shortcut` in nolo.json.
 export const DEFAULT_SHORTCUT = "ctrl+y";
@@ -137,9 +179,15 @@ export interface LoadedConfig {
   defaultScopeWrites: boolean;
 }
 
-export function loadConfig(): LoadedConfig {
-  const globalPath = join(homedir(), ".pi", "agent", "nolo.json");
-  const projectPath = join(".pi", "nolo.json");
+export interface LoadConfigOptions {
+  /** Override config roots (primarily for hermetic tests). */
+  homeDir?: string;
+  projectDir?: string;
+}
+
+export function loadConfig(opts: LoadConfigOptions = {}): LoadedConfig {
+  const globalPath = join(opts.homeDir ?? homedir(), ".pi", "agent", "nolo.json");
+  const projectPath = join(opts.projectDir ?? ".", ".pi", "nolo.json");
 
   const globalCfg = loadJsonFile(globalPath);
   const projectCfg = loadJsonFile(projectPath);

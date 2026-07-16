@@ -149,8 +149,8 @@ describe("isSafeCommand", () => {
     assert.equal(safe("jq .name package.json"), true);
   });
 
-  it("allows sed", () => {
-    assert.equal(safe("sed -n 5p file.txt"), true);
+  it("blocks sed (removed: its program language can execute and write)", () => {
+    assert.equal(safe("sed -n 5p file.txt"), false);
   });
 
   it("allows diff", () => {
@@ -423,6 +423,109 @@ describe("isSafeCommand -- new safe prefixes", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Mutation/exec flag hardening
+// ---------------------------------------------------------------------------
+describe("isSafeCommand -- mutation and exec flag hardening", () => {
+  it("blocks find file-writing actions", () => {
+    assert.equal(safe("find . -fprint /tmp/out"), false);
+    assert.equal(safe("find . -fprint0 /tmp/out"), false);
+    assert.equal(safe("find . -fprintf /tmp/out '%p\\n'"), false);
+    assert.equal(safe("find . -fls /tmp/out"), false);
+  });
+
+  it("blocks all find execution forms", () => {
+    assert.equal(safe("find . -ok cat {} ;"), false);
+    assert.equal(safe("find . -okdir cat {} ;"), false);
+    assert.equal(safe("find . -execdir cat {} ;"), false);
+  });
+
+  it("blocks file --compile", () => {
+    assert.equal(safe("file -C -m magic"), false);
+    assert.equal(safe("file -Cfoo"), false);
+    assert.equal(safe("file --compile -m magic"), false);
+  });
+
+  it("blocks date clock-setting flags", () => {
+    assert.equal(safe("date -s '2026-01-01'"), false);
+    assert.equal(safe("date -s2026-01-01"), false);
+    assert.equal(safe("date --set='2026-01-01'"), false);
+  });
+
+  it("blocks rg preprocessor execution", () => {
+    assert.equal(safe("rg --pre /tmp/evil.sh foo ."), false);
+    assert.equal(safe("rg --pre=/tmp/evil.sh foo ."), false);
+  });
+
+  it("blocks tree output files", () => {
+    assert.equal(safe("tree -o /tmp/out"), false);
+  });
+
+  it("blocks diff output files", () => {
+    assert.equal(safe("diff --output=/tmp/out a b"), false);
+  });
+
+  it("blocks less log files", () => {
+    assert.equal(safe("less -o /tmp/out file"), false);
+    assert.equal(safe("less --log-file=/tmp/out file"), false);
+  });
+
+  it("blocks git diff-family output and helper execution", () => {
+    assert.equal(safe("git log --output=/tmp/out"), false);
+    assert.equal(safe("git diff --ext-diff"), false);
+    assert.equal(safe("git show --textconv HEAD:file"), false);
+  });
+
+  it("blocks additional git remote mutations", () => {
+    assert.equal(safe("git remote set-head origin -a"), false);
+    assert.equal(safe("git remote prune origin"), false);
+    assert.equal(safe("git remote update"), false);
+  });
+
+  it("blocks branch creation and tracking mutations", () => {
+    assert.equal(safe("git branch new-branch"), false);
+    assert.equal(safe("git branch --track foo origin/foo"), false);
+    assert.equal(safe("git branch --force foo HEAD"), false);
+  });
+
+  it("blocks lightweight, signed, and annotated tag mutations", () => {
+    assert.equal(safe("git tag v1"), false);
+    assert.equal(safe("git tag -- v1"), false);
+    assert.equal(safe("git tag -a v1 -m release"), false);
+    assert.equal(safe("git tag --sign v1"), false);
+    assert.equal(safe("git tag --create-reflog v1"), false);
+  });
+});
+
+describe("isSafeCommand -- dynamic argument hardening", () => {
+  it("blocks substitution hiding sort -o", () => {
+    assert.equal(safe("sort $(echo -o) /tmp/out input"), false);
+  });
+
+  it("blocks substitution-derived options for risky built-ins", () => {
+    assert.equal(safe("find . $(echo -print)"), false);
+    assert.equal(safe("rg $(echo --pre=/tmp/x) foo ."), false);
+    assert.equal(safe("date $(echo +%s)"), false);
+    assert.equal(safe("git log $(echo --oneline)"), false);
+  });
+
+  it("still allows substitutions for argument-inert commands", () => {
+    assert.equal(safe("echo $(date +%s)"), true);
+    assert.equal(safe("cat $(echo package.json)"), true);
+  });
+
+  it("blocks xargs from invoking flag-dangerous commands", () => {
+    assert.equal(safe("cat args | xargs find ."), false);
+    assert.equal(safe("cat args | xargs sort"), false);
+    assert.equal(safe("cat args | xargs rg foo"), false);
+  });
+
+  it("still allows xargs with argument-safe commands", () => {
+    assert.equal(safe("find . -name '*.ts' | xargs grep foo"), true);
+    assert.equal(safe("find . -name '*.ts' | xargs cat"), true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // New segment dangerous patterns (fd exec, sort -o)
 // ---------------------------------------------------------------------------
 describe("isSafeCommand -- new segment dangerous patterns", () => {
@@ -677,6 +780,18 @@ describe("isSafeCommand -- command substitutions", () => {
 
   it("blocks arithmetic expansion (inner is not a command)", () => {
     assert.equal(safeWith("echo $((1+2))"), false);
+  });
+
+  it("fails closed at recursion cap even without the configurable $( pattern)", () => {
+    assert.equal(
+      isSafeCommand(
+        "echo $(echo $(echo $(echo $(echo $(echo $(date))))))",
+        scriptPrefixes,
+        [],
+        defaultSegmentRegexes,
+      ),
+      false,
+    );
   });
 
   it("still blocks literal $( in single quotes (existing behavior)", () => {

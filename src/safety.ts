@@ -1,5 +1,10 @@
 import { resolve as resolvePath, normalize as normalizePath } from "node:path";
-import { STDOUT_REDIRECT_RE, PREFIX_DANGEROUS_FLAGS } from "./config.js";
+import {
+  STDOUT_REDIRECT_RE,
+  PREFIX_DANGEROUS_FLAGS,
+  DYNAMIC_ARGUMENT_UNSAFE_PREFIXES,
+  XARGS_SAFE_PREFIXES,
+} from "./config.js";
 
 // --- xargs command extractor ---
 
@@ -226,6 +231,22 @@ export function expandVars(segment: string, vars: Map<string, string>): string {
   return out;
 }
 
+// --- Prefix semantic checks ---
+
+/**
+ * `git branch NAME` and `git tag NAME` mutate refs without requiring a
+ * dangerous-looking flag. Flag-driven mutation forms are handled by
+ * PREFIX_DANGEROUS_FLAGS; this catches the plain positional creation form.
+ */
+function isPlainGitRefCreation(clean: string, prefix: string): boolean {
+  if (prefix !== "git branch" && prefix !== "git tag") return false;
+  const rest = clean.slice(prefix.length).trim();
+  if (!rest) return false;
+  // A first positional token creates a branch/lightweight tag. `-- NAME` is
+  // the same form with option parsing terminated explicitly.
+  return !rest.startsWith("-") || /^--\s+\S/.test(rest);
+}
+
 // --- Safety check ---
 
 /**
@@ -284,7 +305,11 @@ export function isSafeCommand(
   // `\$\(` dangerous pattern rejects it below.
   const spans = extractCommandSubstitutions(trimmed);
   if (spans === null) return false;
-  if (spans.length > 0 && depth < MAX_SUBST_DEPTH) {
+  // Fail closed at the recursion cap independently of configurable dangerous
+  // patterns; otherwise removing the default `\$\(` regex could let deeply
+  // nested substitutions bypass recursive validation.
+  if (spans.length > 0 && depth >= MAX_SUBST_DEPTH) return false;
+  if (spans.length > 0) {
     for (const span of spans) {
       if (
         !isSafeCommand(span.inner, safePrefixes, dangerousRegexes, segmentDangerousRegexes, opts, depth + 1)
@@ -361,37 +386,48 @@ export function isSafeCommand(
       if (re.test(clean)) return false;
     }
 
-    let matched = false;
+    let matchedPrefix: string | null = null;
+    let isXargs = false;
 
-    // xargs is allowed when the command it runs is itself a safe prefix.
+    // xargs input becomes runtime arguments, so it may only invoke a narrower
+    // set of argument-safe commands. Allowing every normal prefix here would
+    // permit inputs like "-delete" to turn `xargs find` into a mutation.
     if (clean === "xargs" || clean.startsWith("xargs ")) {
+      isXargs = true;
       const sub = getXargsCommand(clean);
-      // No explicit command means xargs uses echo -- safe.
+      // No explicit command means xargs uses echo.
       if (sub === null) {
-        matched = true;
-      } else {
-        for (const prefix of safePrefixes) {
-          if (sub === prefix || sub.startsWith(prefix + " ")) {
-            matched = true;
-            break;
-          }
-        }
+        matchedPrefix = "echo";
+      } else if (XARGS_SAFE_PREFIXES.has(sub) && safePrefixes.includes(sub)) {
+        matchedPrefix = sub;
       }
     }
 
-    if (!matched) {
+    if (!matchedPrefix && !isXargs) {
       for (const prefix of safePrefixes) {
         if (clean === prefix || clean.startsWith(prefix + " ")) {
-          // Check prefix-specific dangerous flags before accepting
-          const flags = PREFIX_DANGEROUS_FLAGS[prefix];
-          if (flags?.some((re) => re.test(clean))) return false;
-          matched = true;
+          matchedPrefix = prefix;
           break;
         }
       }
     }
 
-    if (!matched) return false;
+    if (!matchedPrefix) return false;
+
+    // Check prefix-specific literal flags and mutation forms before accepting.
+    const flags = PREFIX_DANGEROUS_FLAGS[matchedPrefix];
+    if (flags?.some((re) => re.test(clean))) return false;
+    if (isPlainGitRefCreation(clean, matchedPrefix)) return false;
+
+    // A validated substitution is still opaque: its runtime output can become
+    // an option. For commands with write/exec-capable options, force a prompt
+    // rather than let a placeholder hide a flag (e.g. sort $(echo -o)).
+    if (
+      clean.includes(SUBST_PLACEHOLDER) &&
+      DYNAMIC_ARGUMENT_UNSAFE_PREFIXES.has(matchedPrefix)
+    ) {
+      return false;
+    }
   }
 
   return true;
