@@ -11,6 +11,8 @@
  * Standalone literal assignments (D=/path) are safe segments and $D/${D} references are expanded
  * before prefix matching. Command substitutions $(...) are validated recursively: safe inner
  * commands are replaced with an inert placeholder; unsafe ones fall through to confirmation.
+ * cd <literal-dir> is tracked across && boundaries so relative ./x command words resolve to
+ * absolute paths before prefix matching. Bare newlines separate commands like `;`.
  *
  * YOLO modes (toggle with /yolo or the configured shortcut, default ctrl+y):
  *   off        — default: confirm all writes/edits/bash (safe bash commands auto-approved)

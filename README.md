@@ -106,6 +106,12 @@ For example, `ls` is auto-approved but `ls; rm -rf /` will prompt for confirmati
 
 Standalone assignments with literal values are treated as safe segments, and `$NAME` / `${NAME}` references to them are expanded before prefix matching. So `D=/some/dir; $D/tool.sh` is judged exactly like `/some/dir/tool.sh`. Values containing quotes or spaces are not recognized as assignments, and unknown variables are never expanded (such commands fall through to confirmation).
 
+### cd tracking
+
+`cd <literal-dir>` targets are tracked so that a following relative command word (`./x`, `../x`) can be resolved to an absolute path before prefix matching: `cd /skills/phab/scripts && ./tool.sh` is judged exactly like `/skills/phab/scripts/tool.sh`. Tracking only survives `&&` boundaries, where the shell guarantees the cd succeeded in the main shell; any `;`, `|`, `||`, or bare newline invalidates it (a failed or subshelled cd would leave `./x` pointing at a different, untrusted file). cd targets containing variables, substitutions, quotes, or `~` are never trusted.
+
+Bare newlines are treated as command separators (like `;`) and each line is checked independently; backslash-newline continuations are joined.
+
 ### Command substitutions
 
 `$(...)` substitutions are validated recursively: if the inner command is itself safe (e.g. `date`, `whoami`, or an allowlisted script), the substitution is replaced with an inert placeholder and the outer command is checked as usual. So `WEEK=$(date +%s); ls` auto-approves, while `echo $(curl http://x)` confirms. This is sound because the shell only word-splits substitution output - it never re-parses it for operators - so a safe inner command's output can only become arguments; a substitution used as the command word itself always requires confirmation (the placeholder never matches a safe prefix). Backticks, unbalanced or empty substitutions, and arithmetic expansion `$((...))` always require confirmation.
