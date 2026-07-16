@@ -86,6 +86,28 @@ export function splitOnShellOperators(command: string): string[] {
   return segments;
 }
 
+// --- Simple variable assignments ---
+
+// A standalone segment like `D=/path/to/dir` with a literal value: no spaces,
+// quotes, `$`, or backslashes (command substitution and redirects are already
+// rejected globally before segments are examined).
+const ASSIGNMENT_RE = /^([A-Za-z_][A-Za-z0-9_]*)=([A-Za-z0-9_@%+=:,.\/~-]*)$/;
+
+/**
+ * Expands `$NAME` / `${NAME}` occurrences for variables assigned earlier in
+ * the same command. Unknown variables are left untouched (and will then fail
+ * prefix matching, forcing confirmation).
+ */
+export function expandVars(segment: string, vars: Map<string, string>): string {
+  if (vars.size === 0) return segment;
+  let out = segment;
+  for (const [name, value] of vars) {
+    out = out.split("${" + name + "}").join(value);
+    out = out.replace(new RegExp("\\$" + name + "(?![A-Za-z0-9_])", "g"), value);
+  }
+  return out;
+}
+
 // --- Safety check ---
 
 /**
@@ -98,6 +120,11 @@ export function splitOnShellOperators(command: string): string[] {
  *   global  -- checked on the full command string (backticks, $(), rm, sudo, eval, source)
  *   segment -- checked per segment (sh/bash as commands, find -exec/-delete, system() calls)
  * Stderr redirects such as 2>/dev/null are allowed.
+ *
+ * Standalone assignment segments with literal values (e.g. `D=/path`) are
+ * treated as safe, and `$D` / `${D}` in later segments is expanded to the
+ * assigned value before prefix matching, so `D=/x; $D/tool.sh` is judged
+ * exactly like `/x/tool.sh`.
  */
 export function isSafeCommand(
   command: string,
@@ -122,10 +149,22 @@ export function isSafeCommand(
   const segments = splitOnShellOperators(trimmed);
   if (segments.every((s) => !s.trim())) return false;
 
+  const vars = new Map<string, string>();
+
   for (const segment of segments) {
+    // Expand variables assigned earlier in this command before any checks.
+    const expanded = expandVars(segment, vars);
+
     // Strip fd/stderr redirects (e.g. 2>/dev/null, 2>&1) before checks.
-    const clean = segment.replace(/\s+\d*>(?:&\d+|\S*)/g, "").trim();
+    const clean = expanded.replace(/\s+\d*>(?:&\d+|\S*)/g, "").trim();
     if (!clean) continue;
+
+    // Standalone literal assignment: record it and treat the segment as safe.
+    const assign = clean.match(ASSIGNMENT_RE);
+    if (assign) {
+      vars.set(assign[1], assign[2]);
+      continue;
+    }
 
     // Segment check: dangerous flags or calls within otherwise-safe commands.
     // Applied here (not globally) to avoid false positives on filenames and

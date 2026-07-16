@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { isSafeCommand, splitOnShellOperators, getXargsCommand } from "../src/safety.js";
+import { isSafeCommand, splitOnShellOperators, getXargsCommand, expandVars } from "../src/safety.js";
 import {
   DEFAULT_SAFE_PREFIXES,
   DEFAULT_DANGEROUS_PATTERNS,
@@ -434,6 +434,85 @@ describe("isSafeCommand -- new segment dangerous patterns", () => {
 
   it("allows sort -r (not -o)", () => {
     assert.equal(safe("sort -r names.txt"), true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Variable assignments and expansion
+// ---------------------------------------------------------------------------
+describe("expandVars", () => {
+  it("expands $NAME", () => {
+    assert.equal(expandVars("$D/tool.sh", new Map([["D", "/x"]])), "/x/tool.sh");
+  });
+
+  it("expands ${NAME}", () => {
+    assert.equal(expandVars("${D}/tool.sh", new Map([["D", "/x"]])), "/x/tool.sh");
+  });
+
+  it("does not expand longer names sharing a prefix", () => {
+    assert.equal(expandVars("$DIR/tool.sh", new Map([["D", "/x"]])), "$DIR/tool.sh");
+  });
+
+  it("leaves unknown variables untouched", () => {
+    assert.equal(expandVars("$OTHER/tool.sh", new Map([["D", "/x"]])), "$OTHER/tool.sh");
+  });
+});
+
+describe("isSafeCommand -- variable assignments", () => {
+  const scriptPrefixes = [...DEFAULT_SAFE_PREFIXES, "/skills/phab/scripts/phab-get.sh"];
+  function safeWith(cmd: string) {
+    return isSafeCommand(cmd, scriptPrefixes, defaultRegexes, defaultSegmentRegexes);
+  }
+
+  it("allows assignment + expanded safe command", () => {
+    assert.equal(safeWith("D=/skills/phab/scripts; $D/phab-get.sh T123"), true);
+  });
+
+  it("allows ${NAME} expansion form", () => {
+    assert.equal(safeWith("D=/skills/phab/scripts; ${D}/phab-get.sh T123"), true);
+  });
+
+  it("allows assignment + multiple expanded segments", () => {
+    assert.equal(
+      safeWith("D=/skills/phab/scripts; $D/phab-get.sh T123 | head -5; $D/phab-get.sh D456"),
+      true,
+    );
+  });
+
+  it("allows expansion in arguments of safe commands", () => {
+    assert.equal(safeWith("F=/tmp/out.json; cat $F"), true);
+  });
+
+  it("allows a pure assignment command", () => {
+    assert.equal(safeWith("D=/skills/phab/scripts"), true);
+  });
+
+  it("blocks expansion resolving to a non-safe command", () => {
+    assert.equal(safeWith("D=/usr/bin; $D/python x.py"), false);
+  });
+
+  it("blocks unknown variable as command", () => {
+    assert.equal(safeWith("$UNDEFINED/phab-get.sh T123"), false);
+  });
+
+  it("blocks assignment with command substitution (global $( check)", () => {
+    assert.equal(safeWith("D=$(pwd); $D/phab-get.sh T123"), false);
+  });
+
+  it("blocks assignment with backticks (global check)", () => {
+    assert.equal(safeWith("D=`pwd`; ls $D"), false);
+  });
+
+  it("does not treat quoted values as assignments", () => {
+    assert.equal(safeWith("D='/skills/phab/scripts'; $D/phab-get.sh T123"), false);
+  });
+
+  it("does not treat values with spaces as assignments", () => {
+    assert.equal(safeWith("D=/a b; ls"), false);
+  });
+
+  it("blocks rm even via expansion (global check)", () => {
+    assert.equal(safeWith("D=/bin; ls && rm foo"), false);
   });
 });
 

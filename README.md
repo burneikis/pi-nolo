@@ -102,6 +102,10 @@ Even if a command starts with a safe prefix, it will still require confirmation 
 
 For example, `ls` is auto-approved but `ls; rm -rf /` will prompt for confirmation.
 
+### Variable assignments
+
+Standalone assignments with literal values are treated as safe segments, and `$NAME` / `${NAME}` references to them are expanded before prefix matching. So `D=/some/dir; $D/tool.sh` is judged exactly like `/some/dir/tool.sh`. Values containing quotes, spaces, or substitutions are not recognized as assignments, and unknown variables are never expanded (such commands fall through to confirmation).
+
 ## Configuration
 
 You can customize the allowlist with a `nolo.json` config file:
