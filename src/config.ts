@@ -210,7 +210,11 @@ export interface LoadConfigOptions {
 }
 
 export function loadConfig(opts: LoadConfigOptions = {}): LoadedConfig {
-  const globalPath = join(opts.homeDir ?? homedir(), ".pi", "agent", "nolo.json");
+  const env = opts.env ?? process.env;
+  const agentDir = opts.homeDir
+    ? join(opts.homeDir, ".pi", "agent")
+    : env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+  const globalPath = join(agentDir, "nolo.json");
   const projectPath = join(opts.projectDir ?? ".", ".pi", "nolo.json");
 
   const globalCfg = loadJsonFile(globalPath);
