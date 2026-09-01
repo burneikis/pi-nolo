@@ -11,13 +11,14 @@ import {
   DEFAULT_SHORTCUT,
 } from "../src/config.js";
 
-// loadConfig reads from homedir()/.pi/agent/nolo.json and .pi/nolo.json.
+// loadConfig reads from PI_CODING_AGENT_DIR/nolo.json (or homedir()/.pi/agent/nolo.json) and .pi/nolo.json.
 // We test it in the project directory context by writing a .pi/nolo.json
 // in a temp working directory and changing process.cwd via cd isn't possible
 // in-process, so we write directly to .pi/nolo.json relative to cwd instead.
 
 const PROJECT_CFG = join(".pi", "nolo.json");
 const EMPTY_HOME = join(tmpdir(), "pi-nolo-test-empty-home");
+const AGENT_DIR = join(tmpdir(), "pi-nolo-test-agent-dir");
 const loadConfig = (extra: { env?: Record<string, string | undefined> } = {}) =>
   loadConfigFromDisk({ homeDir: EMPTY_HOME, ...extra });
 
@@ -26,7 +27,10 @@ function cleanProjectCfg() {
 }
 
 describe("loadConfig", () => {
-  after(cleanProjectCfg);
+  after(() => {
+    cleanProjectCfg();
+    rmSync(AGENT_DIR, { recursive: true, force: true });
+  });
 
   it("returns defaults when no config files exist", () => {
     cleanProjectCfg();
@@ -34,6 +38,18 @@ describe("loadConfig", () => {
     assert.deepEqual(cfg.safePrefixes, DEFAULT_SAFE_PREFIXES);
     assert.equal(cfg.dangerousRegexes.length, DEFAULT_DANGEROUS_PATTERNS.length);
     assert.equal(cfg.segmentDangerousRegexes.length, DEFAULT_SEGMENT_DANGEROUS_PATTERNS.length);
+  });
+
+  it("loads global config from PI_CODING_AGENT_DIR", () => {
+    cleanProjectCfg();
+    rmSync(AGENT_DIR, { recursive: true, force: true });
+    mkdirSync(AGENT_DIR, { recursive: true });
+    writeFileSync(join(AGENT_DIR, "nolo.json"), JSON.stringify({ shortcut: "ctrl+alt+y" }));
+
+    assert.equal(
+      loadConfigFromDisk({ env: { PI_CODING_AGENT_DIR: AGENT_DIR } }).shortcut,
+      "ctrl+alt+y",
+    );
   });
 
   it("merges extra safePrefixes from project config", () => {
