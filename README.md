@@ -157,7 +157,7 @@ Although shell operators in substitution output are not re-parsed, the output ca
 You can customize the allowlist with a `nolo.json` config file:
 
 - **Project-level:** `.pi/nolo.json` (takes precedence)
-- **Global:** `~/.pi/agent/nolo.json`
+- **Global:** `$PI_CODING_AGENT_DIR/nolo.json` (defaults to `~/.pi/agent/nolo.json`)
 
 ### Config format
 
